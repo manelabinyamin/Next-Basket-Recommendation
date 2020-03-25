@@ -55,6 +55,7 @@ def sort_batch_of_lists(uids, batch_of_lists, lens):
 def pad_batch_of_lists(batch_of_lists, pad_len):
     """Pad batch of lists."""
     padded = [l + [[0]] * (pad_len - len(l)) for l in batch_of_lists]
+    # padded = [[[0]] * (pad_len - len(l)) + l for l in batch_of_lists]
     return padded
 
 

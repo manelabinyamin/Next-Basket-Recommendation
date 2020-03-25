@@ -1,7 +1,9 @@
 # -*- coding:utf-8 -*-
 __author__ = 'Randolph'
-
-import os
+import os,sys,inspect
+currentdir = os.path.dirname(os.path.abspath(inspect.getfile(inspect.currentframe())))
+parentdir = os.path.dirname(currentdir)
+sys.path.insert(0,parentdir)
 import math
 import random
 import time
@@ -11,11 +13,11 @@ import torch
 import numpy as np
 from math import ceil
 from utils import data_helpers as dh
-from config import Config
-from rnn_model import DRModel
+from DREAM.config import Config
+from DREAM.rnn_model import DRModel
 
 logging.info("✔︎ DREAM Model Training...")
-logger = dh.logger_fn("torch-log", "logs/training-{0}.log".format(time.asctime()))
+logger = dh.logger_fn("torch-log", "logs/training-{0}.log".format(time.asctime().replace(':','_')))
 
 dilim = '-' * 120
 logger.info(dilim)
@@ -26,18 +28,18 @@ logger.info(dilim)
 
 def train():
     # Load data
-    logger.info("✔︎ Loading data...")
+    logger.info("Loading data...")
 
-    logger.info("✔︎ Training data processing...")
+    logger.info("Training data processing...")
     train_data = dh.load_data(Config().TRAININGSET_DIR)
 
-    logger.info("✔︎ Validation data processing...")
-    validation_data = dh.load_data(Config().VALIDATIONSET_DIR)
+    # logger.info("Validation data processing...")
+    # validation_data = dh.load_data(Config().VALIDATIONSET_DIR)
 
-    logger.info("✔︎ Test data processing...")
+    logger.info("Test data processing...")
     test_data = dh.load_data(Config().TESTSET_DIR)
 
-    logger.info("✔︎ Load negative sample...")
+    logger.info("Load negative sample...")
     with open(Config().NEG_SAMPLES, 'rb') as handle:
         neg_samples = pickle.load(handle)
 
@@ -65,7 +67,10 @@ def train():
                 if basket_t[0] != 0 and t != 0:
                     pos_idx = torch.LongTensor(basket_t)
 
-                    # Sample negative products
+                    # # Sample negative products
+                    # b_neg_sample = np.delete(np.arange(start=1,stop=Config().num_product),pos_idx-1)
+                    # neg = random.sample(list(b_neg_sample), len(basket_t))
+
                     neg = random.sample(list(neg_samples[uid]), len(basket_t))
                     neg_idx = torch.LongTensor(neg)
 
@@ -149,6 +154,16 @@ def train():
                 p_length = len(positives)
                 positives = torch.LongTensor(positives)
 
+                # scores = list(torch.mm(du_latest, item_embedding.t()).data.numpy()[0])
+                # # Calculate hit-ratio
+                # highest_score = []
+                # for k in range(Config().top_k):
+                #     prod = scores.index(max(scores))
+                #     highest_score.append(prod)
+                #     scores[prod] = -9999
+                # hitratio_numer += len((set(positives) & set(highest_score)))
+                # hitratio_denom += min(Config().top_k,p_length)
+
                 # Deal with positives samples
                 scores_pos = list(torch.mm(du_latest, item_embedding[positives].t()).data.numpy()[0])
                 for s in scores_pos:
@@ -168,7 +183,7 @@ def train():
                     index_k.append(index)
                     scores[index] = -9999
                 hitratio_numer += len((set(np.arange(0, p_length)) & set(index_k)))
-                hitratio_denom += p_length
+                hitratio_denom += min(Config().top_k,p_length)
 
                 # Calculate NDCG
                 u_dcg = 0
@@ -180,10 +195,12 @@ def train():
                 ndcg += u_dcg / u_idcg
 
         hit_ratio = hitratio_numer / hitratio_denom
+        # ndcg = 1
         ndcg = ndcg / len(train_data)
         logger.info('[Test]| Epochs {:3d} | Hit ratio {:02.4f} | NDCG {:05.4f} |'
                     .format(epoch, hit_ratio, ndcg))
         return hit_ratio, ndcg
+
 
     timestamp = str(int(time.time()))
     out_dir = os.path.abspath(os.path.join(os.path.curdir, "runs", timestamp))
@@ -200,8 +217,8 @@ def train():
             train_model()
             logger.info('-' * 89)
 
-            val_loss = validate_model()
-            logger.info('-' * 89)
+            # val_loss = validate_model()
+            # logger.info('-' * 89)
 
             hit_ratio, ndcg = test_model()
             logger.info('-' * 89)
@@ -211,6 +228,9 @@ def train():
                 with open(checkpoint_dir.format(epoch=epoch, hitratio=hit_ratio, ndcg=ndcg), 'wb') as f:
                     torch.save(model, f)
                 best_hit_ratio = hit_ratio
+
+        # predict
+
     except KeyboardInterrupt:
         logger.info('*' * 89)
         logger.info('Early Stopping!')
