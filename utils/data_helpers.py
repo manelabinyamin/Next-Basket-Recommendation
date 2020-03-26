@@ -1,6 +1,4 @@
 # -*- coding:utf-8 -*-
-__author__ = 'Randolph'
-
 import os
 import logging
 import torch

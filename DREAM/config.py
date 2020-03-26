@@ -1,7 +1,4 @@
 # -*- coding:utf-8 -*-
-__author__ = 'Randolph'
-
-
 class Config(object):
     def __init__(self):
         self.TRAININGSET_DIR = '../data/train.json'
