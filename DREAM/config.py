@@ -2,7 +2,6 @@
 class Config(object):
     def __init__(self):
         self.TRAININGSET_DIR = '../data/train.json'
-        self.VALIDATIONSET_DIR = '../data/validation_sample.json'
         self.TESTSET_DIR = '../data/test.json'
         self.NEG_SAMPLES = '../data/neg.pickle'
         self.MODEL_DIR = 'runs/'
@@ -17,7 +16,6 @@ class Config(object):
         self.rnn_type = 'LSTM'  # ['RNN_TANH', 'RNN_RELU', 'LSTM', 'GRU']
         self.rnn_layer_num = 2
         self.dropout = 0.5
-        self.num_product = 4449+1  # 26991+1 # # 商品数目，用于定义 Embedding Layer
-        self.embedding_dim = 32  # 商品表征维数， 用于定义 Embedding Layer
-        self.neg_num = 500  # 负采样个数
-        self.top_k = 1  # Top K 取值
+        self.num_product = 4449+1  # 26991+1 # Embedding Layer
+        self.embedding_dim = 32  # Embedding Layer
+        self.top_k = 1  # Top K

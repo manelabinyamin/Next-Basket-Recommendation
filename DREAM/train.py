@@ -11,6 +11,8 @@ import pickle
 import torch
 import numpy as np
 from math import ceil
+import pandas as pd
+import matplotlib.pyplot as plt
 from utils import data_helpers as dh
 from DREAM.config import Config
 from DREAM.rnn_model import DRModel
@@ -25,25 +27,13 @@ for attr in sorted(Config().__dict__):
 logger.info(dilim)
 
 
+def calc_acc(scores, pos_idx):
+    # Calculate hit-ratio
+    prod = scores.index(max(scores[1:-1]))
+    return prod in pos_idx
+
+
 def train():
-    # Load data
-    logger.info("Loading data...")
-
-    logger.info("Training data processing...")
-    train_data = dh.load_data(Config().TRAININGSET_DIR)
-
-    logger.info("Test data processing...")
-    test_data = dh.load_data(Config().TESTSET_DIR)
-
-    logger.info("Load negative sample...")
-    with open(Config().NEG_SAMPLES, 'rb') as handle:
-        neg_samples = pickle.load(handle)
-
-    # Model config
-    model = DRModel(Config())
-
-    # Optimizer
-    optimizer = torch.optim.Adam(model.parameters(), lr=Config().learning_rate)
 
     def bpr_loss(uids, baskets, dynamic_user, item_embedding):
         """
@@ -56,6 +46,8 @@ def train():
             item_embedding: item_embedding matrix
         """
         loss = 0
+        acc = 0
+        acc_denom = 0
         for uid, bks, du in zip(uids, baskets, dynamic_user):
             du_p_product = torch.mm(du, item_embedding.t())  # shape: [pad_len, num_item]
             loss_u = []  # loss for user
@@ -75,23 +67,31 @@ def train():
 
                     # Average Negative log likelihood for basket_t
                     loss_u.append(torch.mean(-torch.nn.LogSigmoid()(score)))
+
+                    # calc accuracy
+                    acc_scores = list(du_p_product.data.numpy()[0])
+                    acc_pos = pos_idx.data.tolist()
+                    acc += calc_acc(acc_scores, acc_pos)
+                    acc_denom += 1.0
+
             for i in loss_u:
                 loss = loss + i / len(loss_u)
         avg_loss = torch.div(loss, len(baskets))
-        return avg_loss
+        return avg_loss, float(acc/acc_denom)
 
     def train_model():
         model.train()  # turn on training mode for dropout
         dr_hidden = model.init_hidden(Config().batch_size)
         train_loss = 0
+        train_acc = []
         start_time = time.clock()
         num_batches = ceil(len(train_data) / Config().batch_size)
         for i, x in enumerate(dh.batch_iter(train_data, Config().batch_size, Config().seq_len, shuffle=True)):
             uids, baskets, lens = x
-            model.zero_grad()  # 如果不置零，Variable 的梯度在每次 backward 的时候都会累加
+            model.zero_grad()
             dynamic_user, _ = model(baskets, lens, dr_hidden)
 
-            loss = bpr_loss(uids, baskets, dynamic_user, model.encode.weight)
+            loss, acc = bpr_loss(uids, baskets, dynamic_user, model.encode.weight)
             loss.backward()
 
             # Clip to avoid gradient exploding
@@ -100,6 +100,7 @@ def train():
             # Parameter updating
             optimizer.step()
             train_loss += loss.data
+            train_acc.append(acc)
 
             # Logging
             if i % Config().log_interval == 0 and i > 0:
@@ -107,27 +108,11 @@ def train():
                 cur_loss = train_loss.item() / Config().log_interval  # turn tensor into float
                 train_loss = 0
                 start_time = time.clock()
-                logger.info('[Training]| Epochs {:3d} | Batch {:5d} / {:5d} | ms/batch {:02.2f} | Loss {:05.4f} |'
-                            .format(epoch, i, num_batches, elapsed, cur_loss))
+                logger.info('[Training]| Epochs {:3d} | Batch {:5d} / {:5d} | ms/batch {:02.2f} | Loss {:05.4f} | Accuracy {:05.4f} |'
+                            .format(epoch, i, num_batches, elapsed, cur_loss, acc))
 
-    def validate_model():
-        model.eval()
-        dr_hidden = model.init_hidden(Config().batch_size)
-        val_loss = 0
-        start_time = time.clock()
-        num_batches = ceil(len(validation_data) / Config().batch_size)
-        for i, x in enumerate(dh.batch_iter(validation_data, Config().batch_size, Config().seq_len, shuffle=False)):
-            uids, baskets, lens = x
-            dynamic_user, _ = model(baskets, lens, dr_hidden)
-            loss = bpr_loss(uids, baskets, dynamic_user, model.encode.weight)
-            val_loss += loss.data
+        return np.mean(train_acc)
 
-        # Logging
-        elapsed = (time.clock() - start_time) * 1000 / num_batches
-        val_loss = val_loss.item() / num_batches
-        logger.info('[Validation]| Epochs {:3d} | Elapsed {:02.2f} | Loss {:05.4f} |'
-                    .format(epoch, elapsed, val_loss))
-        return val_loss
 
     def test_model():
         model.eval()
@@ -136,7 +121,6 @@ def train():
 
         hitratio_numer = 0
         hitratio_denom = 0
-        ndcg = 0.0
 
         for i, x in enumerate(dh.batch_iter(train_data, Config().batch_size, Config().seq_len, shuffle=False)):
             uids, baskets, lens = x
@@ -159,49 +143,64 @@ def train():
                 hitratio_numer += len((set(positives) & set(highest_score)))
                 hitratio_denom += min(Config().top_k,p_length)
 
-                # Calculate NDCG
-                u_dcg = 0
-                u_idcg = 0
-                for k in range(Config().top_k):
-                    if index_k[k] < p_length:  # 长度 p_length 内的为正样本
-                        u_dcg += 1 / math.log(k + 1 + 1, 2)
-                    u_idcg += 1 / math.log(k + 1 + 1, 2)
-                ndcg += u_dcg / u_idcg
-
         hit_ratio = hitratio_numer / hitratio_denom
-        # ndcg = 1
-        ndcg = ndcg / len(train_data)
-        logger.info('[Test]| Epochs {:3d} | Hit ratio {:02.4f} | NDCG {:05.4f} |'
-                    .format(epoch, hit_ratio, ndcg))
-        return hit_ratio, ndcg
+        logger.info('[Test]| Epochs {:3d} | Hit ratio {:02.4f} |'
+                    .format(epoch, hit_ratio))
+        return hit_ratio
 
+
+    # Load data
+    logger.info("Loading data...")
+
+    logger.info("Training data processing...")
+    train_data = dh.load_data(Config().TRAININGSET_DIR)
+
+    logger.info("Test data processing...")
+    test_data = dh.load_data(Config().TESTSET_DIR)
+
+    logger.info("Load negative sample...")
+    with open(Config().NEG_SAMPLES, 'rb') as handle:
+        neg_samples = pickle.load(handle)
+
+    # all_pos_samples = {}
+    # for k, v in neg_samples.items():
+    #     all_pos_samples[k] =
+
+    # users_products = pd.DataFrame(index=train_data.user_id, columns=['bought_prods', 'neg_prods'])
+
+
+    # Model config
+    model = DRModel(Config())
+
+    # Optimizer
+    optimizer = torch.optim.Adam(model.parameters(), lr=Config().learning_rate)
 
     timestamp = str(int(time.time()))
     out_dir = os.path.abspath(os.path.join(os.path.curdir, "runs", timestamp))
     if not os.path.exists(out_dir):
         os.makedirs(out_dir)
     logger.info('Save into {0}'.format(out_dir))
-    checkpoint_dir = out_dir + '/model-{epoch:02d}-{hitratio:.4f}-{ndcg:.4f}.model'
+    checkpoint_dir = out_dir + '/model-{epoch:02d}-{hitratio:.4f}.model'
 
     best_hit_ratio = None
 
     try:
         # Training
         for epoch in range(Config().epochs):
-            train_model()
+            train_acc = train_model()
             logger.info('-' * 89)
 
             # val_loss = validate_model()
             # logger.info('-' * 89)
 
-            hit_ratio, ndcg = test_model()
+            test_acc = test_model()
             logger.info('-' * 89)
 
             # Checkpoint
-            if not best_hit_ratio or hit_ratio > best_hit_ratio:
-                with open(checkpoint_dir.format(epoch=epoch, hitratio=hit_ratio, ndcg=ndcg), 'wb') as f:
+            if not best_hit_ratio or test_acc > best_hit_ratio:
+                with open(checkpoint_dir.format(epoch=epoch, hitratio=test_acc), 'wb') as f:
                     torch.save(model, f)
-                best_hit_ratio = hit_ratio
+                best_hit_ratio = test_acc
 
         # predict
 
