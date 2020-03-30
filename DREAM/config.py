@@ -3,7 +3,7 @@ class Config(object):
     def __init__(self):
         self.TRAININGSET_DIR = '../data/train.json'
         self.TESTSET_DIR = '../data/test.json'
-        self.NEG_SAMPLES = '../data/neg.pickle'
+        self.NEG_SAMPLES = '../data/all_neg2.pickle'
         self.MODEL_DIR = 'runs/'
         self.cuda = False
         self.clip = 10
@@ -19,3 +19,5 @@ class Config(object):
         self.num_product = 4449+1  # 26991+1 # Embedding Layer
         self.embedding_dim = 32  # Embedding Layer
         self.top_k = 1  # Top K
+        self.recall_weight = 500
+        self.precision_weight = 1

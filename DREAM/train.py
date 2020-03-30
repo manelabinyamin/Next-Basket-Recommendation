@@ -35,6 +35,49 @@ def calc_acc(scores, pos_idx):
 
 def train():
 
+    def multi_label_loss(uids, baskets, dynamic_user, item_embedding):
+        '''
+        weighted multi-labeled loss function
+        :param uids: batch of users' ID
+        :param baskets: batch of users' baskets
+        :param dynamic_user:  batch of users' dynamic representations
+        :param item_embedding: item_embedding matrix
+        :return: loss and accuracy
+        '''
+        loss = 0
+        acc = 0
+        acc_denom = 0
+        for uid, bks, du in zip(uids, baskets, dynamic_user):
+            du_p_product = torch.mm(du, item_embedding.t())  # shape: [pad_len, num_item]
+            loss_u = []  # loss for user
+            for t, basket_t in enumerate(bks):
+                if basket_t[0] != 0 and t != 0:
+                    pos_idx = torch.LongTensor(basket_t)
+
+                    labels = pos_idx.unsqueeze(0)
+                    target = torch.zeros(labels.size(0), Config().num_product).scatter_(1, labels, 1.)
+
+                    # Score p(u, t, v > v')
+                    scores = torch.sigmoid(du_p_product[t - 1])
+                    r_w = Config().recall_weight
+                    p_w = Config().precision_weight
+                    a = scores.detach().numpy().min()
+                    b = scores.detach().numpy().max()
+                    l = -torch.mean(r_w * (target * torch.log(scores)) + p_w * ((1 - target) * torch.log(1 - scores)))
+                    loss_u.append(l)
+
+                    # calc accuracy
+                    acc_scores = list(du_p_product.data.numpy()[0])
+                    acc_pos = pos_idx.data.tolist()
+                    acc += calc_acc(acc_scores, acc_pos)
+                    acc_denom += 1.0
+
+            for i in loss_u:
+                loss = loss + i / len(loss_u)
+        avg_loss = torch.div(loss, len(baskets))
+        return avg_loss, float(acc / acc_denom)
+
+
     def bpr_loss(uids, baskets, dynamic_user, item_embedding):
         """
         Bayesian personalized ranking loss for implicit feedback.
@@ -59,6 +102,13 @@ def train():
                     # b_neg_sample = np.delete(np.arange(start=1,stop=Config().num_product),pos_idx-1)
                     # neg = random.sample(list(b_neg_sample), len(basket_t))
 
+                    # prev_pos = set(list(train_data.loc[train_data.userID==uid]['all_products'])[0])
+                    # prev_pos -= set(basket_t)
+                    # neg = random.sample(list(prev_pos), 1) if len(prev_pos)>0 else []
+                    # neg.extend(random.sample(list(neg_samples[uid]), len(basket_t)-len(neg)))
+                    # negative = list(neg_samples[uid])
+                    # negative.extend(list(prev_pos))
+                    # neg = random.sample(negative, len(basket_t))
                     neg = random.sample(list(neg_samples[uid]), len(basket_t))
                     neg_idx = torch.LongTensor(neg)
 
@@ -91,6 +141,7 @@ def train():
             model.zero_grad()
             dynamic_user, _ = model(baskets, lens, dr_hidden)
 
+            # loss, acc = multi_label_loss(uids, baskets, dynamic_user, model.encode.weight)
             loss, acc = bpr_loss(uids, baskets, dynamic_user, model.encode.weight)
             loss.backward()
 
@@ -162,13 +213,6 @@ def train():
     with open(Config().NEG_SAMPLES, 'rb') as handle:
         neg_samples = pickle.load(handle)
 
-    # all_pos_samples = {}
-    # for k, v in neg_samples.items():
-    #     all_pos_samples[k] =
-
-    # users_products = pd.DataFrame(index=train_data.user_id, columns=['bought_prods', 'neg_prods'])
-
-
     # Model config
     model = DRModel(Config())
 
@@ -189,9 +233,6 @@ def train():
         for epoch in range(Config().epochs):
             train_acc = train_model()
             logger.info('-' * 89)
-
-            # val_loss = validate_model()
-            # logger.info('-' * 89)
 
             test_acc = test_model()
             logger.info('-' * 89)
