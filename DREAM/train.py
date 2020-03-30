@@ -16,7 +16,8 @@ import matplotlib.pyplot as plt
 from utils import data_helpers as dh
 from DREAM.config import Config
 from DREAM.rnn_model import DRModel
-from torch.utils.tensorboard import SummaryWriter
+from torch.nn import Parameter
+
 
 logging.info("DREAM Model Training...")
 logger = dh.logger_fn("torch-log", "logs/training-{0}.log".format(time.asctime().replace(':','_')))
@@ -79,7 +80,7 @@ def train():
         return avg_loss, float(acc / acc_denom)
 
 
-    def bpr_loss(uids, baskets, dynamic_user, item_embedding):
+    def bpr_loss(uids, baskets, dynamic_user, item_embedding, biases):
         """
         Bayesian personalized ranking loss for implicit feedback.
 
@@ -116,9 +117,10 @@ def train():
 
                     # Score p(u, t, v > v')
                     score = du_p_product[t - 1][pos_idx] - du_p_product[t - 1][neg_idx]
+                    bias_score = biases[pos_idx] - biases[neg_idx] if Config().substract_bias else 0
 
                     # Average Negative log likelihood for basket_t
-                    loss_u.append(torch.mean(-torch.nn.LogSigmoid()(score)))
+                    loss_u.append(torch.mean(-torch.nn.LogSigmoid()(score-bias_score)))
 
                     # calc accuracy
                     acc_scores = list(du_p_product.data.numpy()[0])
@@ -144,7 +146,7 @@ def train():
             model.zero_grad()
             dynamic_user, _ = model(baskets, lens, dr_hidden)
 
-            loss, acc = loss_function(uids, baskets, dynamic_user, model.encode.weight)
+            loss, acc = loss_function(uids, baskets, dynamic_user, model.encode.weight, biases)
             loss.backward()
 
             # Clip to avoid gradient exploding
@@ -216,9 +218,15 @@ def train():
 
     # Model config
     model = DRModel(Config())
+    if Config().cuda:
+        raise Exception('Add cuda biases')
+    else:
+        biases = Parameter(torch.tensor(np.random.uniform(-0.03,0.03, Config().num_product)), requires_grad=True)
 
+    params = list(model.parameters())
+    params.append(biases)
     # Optimizer
-    optimizer = torch.optim.Adam(model.parameters(), lr=Config().learning_rate)
+    optimizer = torch.optim.Adam(params, lr=Config().learning_rate)
 
     timestamp = str(int(time.time()))
     out_dir = os.path.abspath(os.path.join(os.path.curdir, "runs", timestamp))
@@ -229,7 +237,6 @@ def train():
 
     best_hit_ratio = None
 
-    # writer = SummaryWriter(log_dir='tb_summary/{}'.format(time.asctime().replace(':','_')))
     # build graphs
     plt.ion()
     fig = plt.figure()

@@ -7,12 +7,12 @@ class Config(object):
         self.MODEL_DIR = 'runs/'
         self.cuda = False
         self.clip = 10
-        self.epochs = 30
+        self.epochs = 100
         self.batch_size = 256
         self.seq_len = 15
-        self.learning_rate = 0.01  # Initial Learning Rate
+        self.learning_rate = 0.001  # Initial Learning Rate
         self.log_interval = 1  # num of batches between two logging
-        self.basket_pool_type = 'max'  # ['avg', 'max']
+        self.basket_pool_type = 'avg'  # ['avg', 'max']
         self.rnn_type = 'LSTM'  # ['RNN_TANH', 'RNN_RELU', 'LSTM', 'GRU']
         self.rnn_layer_num = 2
         self.dropout = 0.5
@@ -22,3 +22,4 @@ class Config(object):
         self.recall_weight = 500
         self.precision_weight = 1
         self.loss = 'BPR'  # ['BPR', 'Multi_labeled']
+        self.substract_bias = True
