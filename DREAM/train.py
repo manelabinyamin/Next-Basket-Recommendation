@@ -16,6 +16,7 @@ import matplotlib.pyplot as plt
 from utils import data_helpers as dh
 from DREAM.config import Config
 from DREAM.rnn_model import DRModel
+from torch.utils.tensorboard import SummaryWriter
 
 logging.info("DREAM Model Training...")
 logger = dh.logger_fn("torch-log", "logs/training-{0}.log".format(time.asctime().replace(':','_')))
@@ -102,14 +103,15 @@ def train():
                     # b_neg_sample = np.delete(np.arange(start=1,stop=Config().num_product),pos_idx-1)
                     # neg = random.sample(list(b_neg_sample), len(basket_t))
 
-                    # prev_pos = set(list(train_data.loc[train_data.userID==uid]['all_products'])[0])
-                    # prev_pos -= set(basket_t)
-                    # neg = random.sample(list(prev_pos), 1) if len(prev_pos)>0 else []
+                    old_pos = set(list(train_data.loc[train_data.userID==uid]['all_products'])[0])
+
+                    old_pos -= set(basket_t)
+                    # neg = random.sample(list(old_pos), 1) if len(old_pos)>0 else []
                     # neg.extend(random.sample(list(neg_samples[uid]), len(basket_t)-len(neg)))
-                    # negative = list(neg_samples[uid])
-                    # negative.extend(list(prev_pos))
-                    # neg = random.sample(negative, len(basket_t))
-                    neg = random.sample(list(neg_samples[uid]), len(basket_t))
+                    all_negative = list(neg_samples[uid])
+                    all_negative.extend(list(old_pos))
+                    neg = random.sample(all_negative, len(basket_t))
+                    # neg = random.sample(list(neg_samples[uid]), len(basket_t))
                     neg_idx = torch.LongTensor(neg)
 
                     # Score p(u, t, v > v')
@@ -132,17 +134,17 @@ def train():
     def train_model():
         model.train()  # turn on training mode for dropout
         dr_hidden = model.init_hidden(Config().batch_size)
-        train_loss = 0
+        train_loss = []
         train_acc = []
         start_time = time.clock()
         num_batches = ceil(len(train_data) / Config().batch_size)
+        loss_function = bpr_loss if Config().loss == 'BPR' else multi_label_loss
         for i, x in enumerate(dh.batch_iter(train_data, Config().batch_size, Config().seq_len, shuffle=True)):
             uids, baskets, lens = x
             model.zero_grad()
             dynamic_user, _ = model(baskets, lens, dr_hidden)
 
-            # loss, acc = multi_label_loss(uids, baskets, dynamic_user, model.encode.weight)
-            loss, acc = bpr_loss(uids, baskets, dynamic_user, model.encode.weight)
+            loss, acc = loss_function(uids, baskets, dynamic_user, model.encode.weight)
             loss.backward()
 
             # Clip to avoid gradient exploding
@@ -150,19 +152,18 @@ def train():
 
             # Parameter updating
             optimizer.step()
-            train_loss += loss.data
+            train_loss.append(loss.data)
             train_acc.append(acc)
 
             # Logging
             if i % Config().log_interval == 0 and i > 0:
                 elapsed = (time.clock() - start_time) / Config().log_interval
-                cur_loss = train_loss.item() / Config().log_interval  # turn tensor into float
-                train_loss = 0
+                cur_loss = train_loss[-1]
                 start_time = time.clock()
                 logger.info('[Training]| Epochs {:3d} | Batch {:5d} / {:5d} | ms/batch {:02.2f} | Loss {:05.4f} | Accuracy {:05.4f} |'
                             .format(epoch, i, num_batches, elapsed, cur_loss, acc))
 
-        return np.mean(train_acc)
+        return np.mean(train_acc), np.mean(train_loss)
 
 
     def test_model():
@@ -228,14 +229,39 @@ def train():
 
     best_hit_ratio = None
 
+    # writer = SummaryWriter(log_dir='tb_summary/{}'.format(time.asctime().replace(':','_')))
+    # build graphs
+    plt.ion()
+    fig = plt.figure()
+    ax1 = plt.subplot(111)
+    # plt.axis([0, 1000, 0, 1])
+    all_train_acc = []
+    all_test_acc = []
+    ax1.plot(range(len(all_train_acc)), all_train_acc, color='blue', label='train')
+    ax1.plot(range(len(all_test_acc)), all_test_acc, color='red', label='val')
+    ax1.legend()
+
     try:
         # Training
         for epoch in range(Config().epochs):
-            train_acc = train_model()
+            train_acc, train_loss = train_model()
             logger.info('-' * 89)
 
             test_acc = test_model()
             logger.info('-' * 89)
+
+            # plot results
+            plt.title('Accuracy')
+            all_train_acc.append(train_acc)
+            all_test_acc.append(test_acc)
+            ax1.plot(range(len(all_train_acc)), all_train_acc, color='blue', label='train')
+            ax1.plot(range(len(all_test_acc)), all_test_acc, color='red', label='val')
+            plt.show()
+            plt.pause(0.0001)
+
+            # writer.add_scalars('Accuracy', {'train': train_acc,
+            #                                'val': test_acc})
+            # # writer.add_scalars('Loss', train_loss, epoch)
 
             # Checkpoint
             if not best_hit_ratio or test_acc > best_hit_ratio:
@@ -243,6 +269,7 @@ def train():
                     torch.save(model, f)
                 best_hit_ratio = test_acc
 
+        plt.savefig('results/{}/run_{}.png'.format(Config().loss, timestamp), bbox_inches='tight')
         # predict
 
     except KeyboardInterrupt:
