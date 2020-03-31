@@ -102,3 +102,7 @@ def pool_max(tensor, dim):
 
 def pool_avg(tensor, dim):
     return torch.mean(tensor, dim)
+
+
+def pool_sum(tensor, dim):
+    return torch.sum(tensor, dim)

@@ -23,7 +23,7 @@ class DRModel(torch.nn.Module):
         self.encode = torch.nn.Embedding(num_embeddings=config.num_product,
                                          embedding_dim=config.embedding_dim,
                                          padding_idx=0)
-        self.pool = {'avg': dh.pool_avg, 'max': dh.pool_max}[config.basket_pool_type]  # Pooling of basket
+        self.pool = {'avg': dh.pool_avg, 'max': dh.pool_max, 'sum': dh.pool_sum}[config.basket_pool_type]  # Pooling of basket
 
         # RNN type specify
         if config.rnn_type in ['LSTM', 'GRU']:

@@ -100,12 +100,8 @@ def train():
                 if basket_t[0] != 0 and t != 0:
                     pos_idx = torch.LongTensor(basket_t)
 
-                    # # Sample negative products
-                    # b_neg_sample = np.delete(np.arange(start=1,stop=Config().num_product),pos_idx-1)
-                    # neg = random.sample(list(b_neg_sample), len(basket_t))
-
+                    # Sample negative products
                     old_pos = set(list(train_data.loc[train_data.userID==uid]['all_products'])[0])
-
                     old_pos -= set(basket_t)
                     # neg = random.sample(list(old_pos), 1) if len(old_pos)>0 else []
                     # neg.extend(random.sample(list(neg_samples[uid]), len(basket_t)-len(neg)))
@@ -123,7 +119,7 @@ def train():
                     loss_u.append(torch.mean(-torch.nn.LogSigmoid()(score-bias_score)))
 
                     # calc accuracy
-                    acc_scores = list(du_p_product.data.numpy()[0])
+                    acc_scores = list((du_p_product-biases).data.numpy()[0])
                     acc_pos = pos_idx.data.tolist()
                     acc += calc_acc(acc_scores, acc_pos)
                     acc_denom += 1.0
@@ -187,7 +183,7 @@ def train():
                 positives = test_data[test_data['userID'] == uid].baskets.values[0]  # list dim 1
                 p_length = len(positives)
 
-                scores = list(torch.mm(du_latest, item_embedding.t()).data.numpy()[0])
+                scores = list((torch.mm(du_latest, item_embedding.t())-biases).data.numpy()[0])
                 # Calculate hit-ratio
                 highest_score = []
                 for k in range(Config().top_k):
@@ -225,6 +221,7 @@ def train():
 
     params = list(model.parameters())
     params.append(biases)
+    biases = biases if Config().substract_bias else 0
     # Optimizer
     optimizer = torch.optim.Adam(params, lr=Config().learning_rate)
 
@@ -275,6 +272,12 @@ def train():
                 with open(checkpoint_dir.format(epoch=epoch, hitratio=test_acc), 'wb') as f:
                     torch.save(model, f)
                 best_hit_ratio = test_acc
+                last_best_epoch = epoch
+
+            # adapt learning rate
+            if Config().adaptive_lr and epoch-last_best_epoch>5:
+                for param_group in optimizer.param_groups:
+                    param_group['lr'] *= 0.2
 
         plt.savefig('results/{}/run_{}.png'.format(Config().loss, timestamp), bbox_inches='tight')
         # predict
