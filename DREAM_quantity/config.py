@@ -1,7 +1,7 @@
 # -*- coding:utf-8 -*-
 class Config(object):
     def __init__(self):
-        self.TRAININGSET_DIR = '../data/train.json'
+        self.TRAININGSET_DIR = '../data/q_train.json'
         self.TESTSET_DIR = '../data/test.json'
         self.NEG_SAMPLES = '../data/neg.pickle'
         self.MODEL_DIR = 'runs/'

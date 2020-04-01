@@ -13,9 +13,9 @@ import numpy as np
 from math import ceil
 import pandas as pd
 import matplotlib.pyplot as plt
-from utils import data_helpers as dh
-from DREAM.config import Config
-from DREAM.rnn_model import DRModel
+from DREAM_quantity.utils import data_helpers as dh
+from DREAM_quantity.config import Config
+from DREAM_quantity.rnn_model import DRModel
 from torch.nn import Parameter
 
 
@@ -96,7 +96,8 @@ def train():
         for uid, bks, du in zip(uids, baskets, dynamic_user):
             du_p_product = torch.mm(du, item_embedding.t())  # shape: [pad_len, num_item]
             loss_u = []  # loss for user
-            for t, basket_t in enumerate(bks):
+            for t, basket_tuple_t in enumerate(bks):
+                basket_t, quantity_t = list(zip(*basket_tuple_t))
                 if basket_t[0] != 0 and t != 0:
                     pos_idx = torch.LongTensor(basket_t)
 
@@ -183,7 +184,7 @@ def train():
                 positives = test_data[test_data['userID'] == uid].baskets.values[0]  # list dim 1
                 p_length = len(positives)
 
-                scores = list((torch.mm(du_latest, item_embedding.t())-biases).data.numpy()[0])
+                scores = list((torch.mm(du_latest, item_embedding.t())).data.numpy()[0])  # -biases
                 # Calculate hit-ratio
                 highest_score = []
                 for k in range(Config().top_k):

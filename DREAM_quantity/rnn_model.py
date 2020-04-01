@@ -1,7 +1,7 @@
 # -*- coding:utf-8 -*-
 import torch
 from torch.autograd import Variable
-from utils import data_helpers as dh
+from DREAM_quantity.utils import data_helpers as dh
 
 
 class DRModel(torch.nn.Module):
@@ -54,7 +54,7 @@ class DRModel(torch.nn.Module):
                 basket = torch.LongTensor(basket).resize_(1, len(basket))
                 quantity = torch.LongTensor(quantity).resize_(1, len(quantity))
                 basket = self.encode(torch.autograd.Variable(basket))  # shape: [1, len(basket), embedding_dim]
-                basket = basket * quantity
+                basket = quantity[:,:,None] * basket
                 basket = self.pool(basket, dim=1)
                 basket = basket.reshape(self.config.embedding_dim)
                 embed_baskets[j] = basket  # shape:  [seq_len, 1, embedding_dim]
