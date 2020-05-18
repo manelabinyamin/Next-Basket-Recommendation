@@ -47,7 +47,7 @@ def calc_acc(scores, pos_idx):
 
 def train():
 
-    def multi_label_loss(uids, reorder_baskets, neg_baskets, dynamic_user, item_embedding):
+    def multi_label_loss(uids, reorder_baskets, neg_baskets, lens, dynamic_user, item_embedding):
         '''
         weighted multi-labeled loss function
         :param uids: batch of users' ID
@@ -57,34 +57,42 @@ def train():
         :return: loss and accuracy
         '''
         loss = 0
-        acc = 0
-        acc_denom = 0
-        for uid, re_bks, du in zip(uids, reorder_baskets, dynamic_user):
-            du_p_product = torch.mm(du, item_embedding.t())  # shape: [pad_len, num_item]
-            loss_u = []  # loss for user
-            for t, basket_t in enumerate(re_bks):
-                if basket_t[0] != 0 and t != 0:
-                    pos_idx = torch.LongTensor(basket_t)
+        recall = []
+        precision = []
+        f1 = []
+        for uid, re_bks, neg_bks, l, du in zip(uids, reorder_baskets, neg_baskets, lens, dynamic_user):
+            du = du[l - 1].unsqueeze(0)
+            scores = torch.mm(du, item_embedding.t())#.flatten()  # shape: [pad_len, num_item]
+            pos_idx = torch.cuda.LongTensor(re_bks) if config.cuda else torch.LongTensor(re_bks)
+            labels = pos_idx.unsqueeze(0)
+            if config.cuda:
+                targets = torch.zeros(labels.size(0), config.num_product+2).cuda().scatter_(1, labels, 1.)
+                recall_weights = torch.ones(labels.size(0), config.num_product+2).cuda() * config.recall_weight
+            else:
+                targets = torch.zeros(labels.size(0), config.num_product+2).scatter_(1, labels, 1.)
+                recall_weights = torch.ones(labels.size(0), config.num_product+2) * config.recall_weight
+            criterion = torch.nn.BCEWithLogitsLoss(pos_weight=recall_weights)
+            l = criterion(scores, targets)
+            loss += l
+            # pred = torch.nn.Sigmoid()(scores)
+            # l2 = -torch.mean(config.recall_weight * (targets * torch.log(pred)) + ((1 - targets) * torch.log(1 - pred)))
 
-                    labels = pos_idx.unsqueeze(0)
-                    target = torch.zeros(labels.size(0), config.num_product).scatter_(1, labels, 1.)
 
-                    # Score p(u, t, v > v')
-                    scores = torch.nn.Sigmoid()(du_p_product[t - 1])
-                    r_w = config.recall_weight
-                    p_w = config.precision_weight
-                    l = -torch.mean(r_w * (target * torch.log(scores)) + p_w * ((1 - target) * torch.log(1 - scores)))
-                    loss_u.append(l)
+            # Calculate accuracy, recall and f1-score
+            if config.calc_train_f1:
+                all_scores = torch.nn.Sigmoid()(scores.flatten()[re_bks + neg_bks]).cpu().data.numpy()
+                # choose top k products
+                top_k = all_scores.argsort()[-config.top_k:]
+                true_predicted = (top_k < len(re_bks)).sum()
+                recall.append(float(true_predicted / len(re_bks)))
+                precision.append(float(true_predicted / config.top_k))
+                f1.append(2 * (recall[-1] * precision[-1]) / (recall[-1] + precision[-1] + 1e-6))
 
-                    # calc accuracy
-                    acc_scores = list(du_p_product.data.numpy()[0])
-                    acc_pos = pos_idx.data.tolist()
-                    acc += calc_acc(acc_scores, acc_pos)
-                    acc_denom += 1.0
-
-            for i in loss_u:
-                loss = loss + i / len(loss_u)
-        return loss, float(acc / acc_denom)
+        avg_loss = loss / len(uids)
+        avg_recall = np.mean(recall)
+        avg_precision = np.mean(precision)
+        avg_f1 = np.mean(f1)
+        return avg_loss, avg_recall, avg_precision, avg_f1
 
     def bpr_loss(uids, reorder_baskets, neg_baskets, lens, dynamic_user, item_embedding):
         """
