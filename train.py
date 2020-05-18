@@ -190,12 +190,19 @@ def train():
 
                     # Calculate accuracy, recall and f1-score
                     if config.calc_train_f1 and t==ulen-1:
-                        all_scores = torch.nn.Sigmoid()(du_p_product[t - 1][re_basket_t+neg_bks_t]).cpu().data.numpy().flatten()
+                        if re_basket_t[0] == config.none_idx:
+                            debug = True
+                        all_relevant_prods = neg_bks_t if re_basket_t[0] == config.none_idx else re_basket_t+neg_bks_t
+                        all_scores = torch.nn.Sigmoid()(du_p_product[t - 1][all_relevant_prods]).cpu().data.numpy().flatten()
                         # choose top k products
-                        top_k = all_scores.argsort()[-config.top_k:]
-                        true_predicted = (top_k < len(re_basket_t)).sum()
+                        if all_scores.max() < config.prediction_threshold:  # choose an empty basket
+                            top_k = [config.none_idx]
+                            true_predicted = 1 if re_basket_t[0] == config.none_idx else 0
+                        else:
+                            top_k = all_scores.argsort()[-config.top_k:]
+                            true_predicted = (top_k < len(re_basket_t)).sum()
                         recall.append(float(true_predicted / len(re_basket_t)))
-                        precision.append(float(true_predicted / config.top_k))
+                        precision.append(float(true_predicted / len(top_k)))
                         f1.append(2*(recall[-1]*precision[-1])/(recall[-1]+precision[-1]+1e-6))
 
 
