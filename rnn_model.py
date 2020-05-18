@@ -21,12 +21,12 @@ class DRModel(torch.nn.Module):
         # Model configuration
         self.config = config
         # Encoding
-        # # random initialization
-        # enc_w = torch.Tensor(config.num_product + 2, config.embedding_dim)
-        # stdv = 1. / math.sqrt(enc_w.size(1))  # like in nn.Linear
-        # enc_w.uniform_(-stdv, stdv)
-        # pre-trained weights
-        enc_w = torch.Tensor(np.load(sys.path[0]+'/embedding_layer.npy'))
+        # random initialization
+        enc_w = torch.Tensor(config.num_product + 2, config.embedding_dim)
+        stdv = 1. / math.sqrt(enc_w.size(1))  # like in nn.Linear
+        enc_w.uniform_(-stdv, stdv)
+        ## pre-trained weights
+        # enc_w = torch.Tensor(np.load(sys.path[0]+'/embedding_layer.npy'))
         self.encode = torch.nn.Embedding(num_embeddings=config.num_product+2,
                                          embedding_dim=config.embedding_dim,
                                          padding_idx=0,
