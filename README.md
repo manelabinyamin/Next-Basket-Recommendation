@@ -1,6 +1,7 @@
 # Deep Learning for Next Basket Recommendation
 
 This repository contains my implementations of [DREAM](http://www.nlpr.ia.ac.cn/english/irds/People/sw/DREAM.pdf) for next basket prediction.
+This coded is built upon [Randolph's](https://github.com/RandolphVI) implementation.
 
 ## Requirements
 
@@ -9,11 +10,6 @@ This repository contains my implementations of [DREAM](http://www.nlpr.ia.ac.cn/
 - Pandas 0.23 +
 - scikit-learn 0.19 +
 - Numpy
-- Gensim
-
-## Data
-
-You can download the [Negative Sample (neg_sample.pickle)](https://drive.google.com/open?id=19SnHlic2DswgyPwr9ul3t9uDsgEsaH1X) used in code. **Make sure they are under the `/data` folder.**
 
 ### Data Format
 
