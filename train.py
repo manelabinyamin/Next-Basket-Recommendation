@@ -17,6 +17,7 @@ import data_helpers as dh
 from config import Config
 from rnn_model import DRModel
 from torch.nn import Parameter
+from torchsummary import summary
 
 plt.rcParams['figure.figsize'] = [10, 10]
 
@@ -157,12 +158,12 @@ def train():
         num_batches = ceil(len(x_train) / config.batch_size)
         loss_function = bpr_loss if config.loss == 'BPR' else multi_label_loss
         for i, x in enumerate(dh.batch_iter(x_train, y_train, config.batch_size, config.seq_len, to_shuffle=True, config=config)):
-            uids, baskets, reorder_baskets, neg_baskets, lens = x
+            uids, baskets, dow, hour_of_day, days2next, reorder_baskets, neg_baskets, lens = x
             model.zero_grad()
-            dynamic_user, _ = model(baskets, lens, dr_hidden)
+            dynamic_user, _ = model(baskets, dow, hour_of_day, days2next, lens, dr_hidden)
 
 
-            loss, recall, precision, f1 = loss_function(uids, reorder_baskets, neg_baskets, lens, dynamic_user, model.encode.weight)
+            loss, recall, precision, f1 = loss_function(uids, reorder_baskets, neg_baskets, lens, dynamic_user, model.decode.weight)
             # tie_encoder_decoder_loss = torch.dist(model.encode.weight, model.decode.weight)
             # loss += config.encdr_decdr_regularization * tie_encoder_decoder_loss
             # s = time.time()
@@ -192,15 +193,15 @@ def train():
 
     def evaluate_model():
         model.eval()
-        item_embedding = model.encode.weight
+        item_embedding = model.decode.weight
         dr_hidden = model.init_hidden(config.batch_size)
 
         precision = []
         recall = []
         f1 = []
         for x in dh.batch_iter(x_val, y_val, config.batch_size, config.seq_len, to_shuffle=False):
-            uids, baskets, reorder_baskets, neg_baskets, lens = x
-            dynamic_user, _ = model(baskets, lens, dr_hidden)
+            uids, baskets, dow, hour_of_day, days2next, reorder_baskets, neg_baskets, lens = x
+            dynamic_user, _ = model(baskets, dow, hour_of_day, days2next, lens, dr_hidden)
             for uid, re_bks, neg_bks, l, du in zip(uids, reorder_baskets, neg_baskets, lens, dynamic_user):
                 du_latest = du[l - 1].unsqueeze(0)
 
@@ -249,7 +250,6 @@ def train():
 
     # Optimizer
     optimizer = torch.optim.Adam(model.parameters(), lr=config.learning_rate, weight_decay=config.l2)
-
     timestamp = str(int(time.time()))
     out_dir = os.path.abspath(os.path.join(os.path.curdir, "runs", timestamp))
     if not os.path.exists(out_dir):
