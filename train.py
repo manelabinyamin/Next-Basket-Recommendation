@@ -147,7 +147,7 @@ def train():
         avg_f1 = np.mean(f1)
         return avg_loss, avg_recall, avg_precision, avg_f1
 
-    def bpr_loss_pred_seq(uids, reorder_baskets, neg_baskets, dynamic_user, item_embedding):
+    def bpr_loss_seq(uids, reorder_baskets, neg_baskets, lens, dynamic_user, item_embedding):
         """
         Bayesian personalized ranking loss for implicit feedback.
 
@@ -162,7 +162,7 @@ def train():
         recall = []
         precision = []
         f1 = []
-        for uid, re_bks, neg_bks, du in zip(uids, reorder_baskets, neg_baskets, dynamic_user):
+        for uid, re_bks, neg_bks, ulen, du in zip(uids, reorder_baskets, neg_baskets, lens, dynamic_user):
             du_p_product = torch.mm(du, item_embedding.t())  # shape: [pad_len, num_item]
             loss_u = []  # loss for user
             for t, [re_basket_t, neg_bks_t] in enumerate(zip(re_bks,neg_bks)):
@@ -189,7 +189,7 @@ def train():
                     loss_u.append(-torch.mean(torch.nn.LogSigmoid()(score)))
 
                     # Calculate accuracy, recall and f1-score
-                    if config.calc_train_f1:
+                    if config.calc_train_f1 and t==ulen-1:
                         all_scores = torch.nn.Sigmoid()(du_p_product[t - 1][re_basket_t+neg_bks_t]).cpu().data.numpy().flatten()
                         # choose top k products
                         top_k = all_scores.argsort()[-config.top_k:]
@@ -215,15 +215,14 @@ def train():
         train_loss = []
         start_time = time.process_time()
         num_batches = ceil(len(x_data) / config.batch_size)
-        loss_function = bpr_loss if config.loss == 'BPR' else multi_label_loss
+        l_functions = {'BPR':bpr_loss, 'BPR_seq':bpr_loss_seq, 'Multi_labeled':multi_label_loss}
+        loss_function = l_functions[config.loss]
         for i, x in enumerate(dh.batch_iter(x_data, config.batch_size, config.seq_len, to_shuffle=True)):
             uids, baskets, dow, hour_of_day, days2next, reorder_baskets, neg_baskets, lens = x
             model.zero_grad()
             dynamic_user, _ = model(baskets, dow, hour_of_day, days2next, lens, dr_hidden)
 
-
-            loss, recall, precision, f1 = bpr_loss_pred_seq(uids, reorder_baskets, neg_baskets, dynamic_user, model.decode.weight)
-            # loss, recall, precision, f1 = loss_function(uids, reorder_baskets, neg_baskets, lens, dynamic_user, model.decode.weight)
+            loss, recall, precision, f1 = loss_function(uids, reorder_baskets, neg_baskets, lens, dynamic_user, model.decode.weight)
             # tie_encoder_decoder_loss = torch.dist(model.encode.weight, model.decode.weight)
             # loss += config.encdr_decdr_regularization * tie_encoder_decoder_loss
             # s = time.time()

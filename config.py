@@ -22,7 +22,7 @@ class Config(object):
         self.embedding_dim = 100  # Embedding Layer
         self.top_k = 5  # Top K
         self.recall_weight = 1000
-        self.loss = 'BPR'  # ['BPR', 'Multi_labeled']
+        self.loss = 'BPR_seq'  # ['BPR', 'BPR_seq', 'Multi_labeled']
         self.substract_bias = True
         self.adaptive_lr = True
         self.use_neg_baskets = True
