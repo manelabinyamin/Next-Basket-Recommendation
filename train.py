@@ -190,8 +190,6 @@ def train():
 
                     # Calculate accuracy, recall and f1-score
                     if config.calc_train_f1 and t==ulen-1:
-                        if re_basket_t[0] == config.none_idx:
-                            debug = True
                         all_relevant_prods = neg_bks_t if re_basket_t[0] == config.none_idx else re_basket_t+neg_bks_t
                         all_scores = torch.nn.Sigmoid()(du_p_product[t - 1][all_relevant_prods]).cpu().data.numpy().flatten()
                         # choose top k products
@@ -271,16 +269,17 @@ def train():
             for uid, re_bks, neg_bks, l, du in zip(uids, reorder_baskets, neg_baskets, lens, dynamic_user):
                 du_latest = du[l - 1].unsqueeze(0)
 
-                # calculating <u,p> score for all test items <u,p> pair
-                # pos = y_val.loc[uid].reorder_baskets  # list dim 1
-                # neg = y_val.loc[uid].neg_baskets
-
-                all_scores = torch.nn.Sigmoid()(torch.mm(du_latest, item_embedding.t())).cpu().data.numpy().flatten()[re_bks + neg_bks]
+                all_relevant_prods = neg_bks if re_bks[0] == config.none_idx else re_bks + neg_bks
+                all_scores = torch.nn.Sigmoid()(torch.mm(du_latest, item_embedding.t())).cpu().data.numpy().flatten()[all_relevant_prods]
                 # choose top k products
-                top_k = all_scores.argsort()[-config.top_k:]
-                true_predicted = (top_k < len(re_bks)).sum()
+                if all_scores.max() < config.prediction_threshold:  # choose an empty basket
+                    top_k = [config.none_idx]
+                    true_predicted = 1 if re_bks[0] == config.none_idx else 0
+                else:
+                    top_k = all_scores.argsort()[-config.top_k:]
+                    true_predicted = (top_k < len(re_bks)).sum()
                 recall.append(float(true_predicted / len(re_bks)))
-                precision.append(float(true_predicted / config.top_k))
+                precision.append(float(true_predicted / len(top_k)))
                 f1.append(2 * (recall[-1] * precision[-1]) / (recall[-1] + precision[-1] + 1e-6))
 
         avg_precision = np.mean(precision)
