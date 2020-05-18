@@ -21,8 +21,8 @@ class Config(object):
         self.none_idx = self.num_product + 1
         self.embedding_dim = 100  # Embedding Layer
         self.top_k = 5  # Top K
-        self.recall_weight = 500
-        self.loss = 'Multi_labeled'  # ['BPR', 'Multi_labeled']
+        self.recall_weight = 5000
+        self.loss = 'BPR'  # ['BPR', 'Multi_labeled']
         self.substract_bias = True
         self.adaptive_lr = True
         self.use_neg_baskets = True
