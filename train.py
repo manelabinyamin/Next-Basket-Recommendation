@@ -86,7 +86,7 @@ def train():
                 loss = loss + i / len(loss_u)
         return loss, float(acc / acc_denom)
 
-    def bpr_loss(uids, reorder_baskets, neg_baskets, dynamic_user, item_embedding):
+    def bpr_loss(uids, reorder_baskets, neg_baskets, lens, dynamic_user, item_embedding):
         """
         Bayesian personalized ranking loss for implicit feedback.
 
@@ -101,44 +101,37 @@ def train():
         recall = []
         precision = []
         f1 = []
-        for uid, re_bks, neg_bks, du in zip(uids, reorder_baskets, neg_baskets, dynamic_user):
-            du_p_product = torch.mm(du, item_embedding.t())  # shape: [pad_len, num_item]
-            loss_u = []  # loss for user
-            for t, [re_basket_t, neg_bks_t] in enumerate(zip(re_bks,neg_bks)):
-                if re_basket_t[0] != 0 and t != 0:
-                    # positive idx
-                    if re_basket_t[0]==None:
-                        re_basket_t = [config.none_idx]
-                    pos_idx = torch.cuda.LongTensor(re_basket_t) if config.cuda else torch.LongTensor(re_basket_t)
-                    # Sample negative products.
-                    if config.use_neg_baskets:
-                        num_his_neg = min(int(np.ceil(len(re_basket_t)*config.neg_basket_ratio)),len(neg_bks_t))
-                        # choose previously ordered products
-                        neg = [np.random.choice(neg_bks_t) for _ in range(num_his_neg)]
-                        # choose from all products
-                        neg += [np.random.choice(config.num_product) for _ in range(len(re_basket_t)-num_his_neg)]
-                    else:
-                        # sample neg products randomly from all products
-                        neg = np.random.choice(config.num_product, len(re_basket_t))
+        for uid, re_bks, neg_bks, l, du in zip(uids, reorder_baskets, neg_baskets, lens, dynamic_user):
+            du = du[l-1].unsqueeze(0)
+            du_p_product = torch.mm(du, item_embedding.t()).flatten()  # shape: [pad_len, num_item]
+            pos_idx = torch.cuda.LongTensor(re_bks) if config.cuda else torch.LongTensor(re_bks)
+            # Sample negative products.
+            if config.use_neg_baskets:
+                num_his_neg = min(int(np.ceil(len(re_bks) * config.neg_basket_ratio)), len(neg_bks))
+                # choose previously ordered products
+                neg = [np.random.choice(neg_bks) for _ in range(num_his_neg)]
+                # choose from all products
+                neg += [np.random.choice(config.num_product) for _ in range(len(re_bks) - num_his_neg)]
+            else:
+                # sample neg products randomly from all products
+                neg = np.random.choice(config.num_product, len(re_bks))
 
-                    neg_idx = torch.cuda.LongTensor(neg) if config.cuda else torch.LongTensor(neg)
-                    # Score p(u, t, v > v')
-                    score = du_p_product[t - 1][pos_idx] - du_p_product[t - 1][neg_idx]
-                    # Average Negative log likelihood for re_basket_t
-                    loss_u.append(-torch.mean(torch.nn.LogSigmoid()(score)))
+            neg_idx = torch.cuda.LongTensor(neg) if config.cuda else torch.LongTensor(neg)
+            # Score p(u, t, v > v')
+            score = du_p_product[pos_idx] - du_p_product[neg_idx]
+            # Average Negative log likelihood for re_basket_t
+            loss += -torch.mean(torch.nn.LogSigmoid()(score))
 
-                    # Calculate accuracy, recall and f1-score
-                    if config.calc_train_f1:
-                        all_scores = torch.nn.Sigmoid()(du_p_product[t - 1][re_basket_t+neg_bks_t]).cpu().data.numpy().flatten()
-                        # choose top k products
-                        top_k = all_scores.argsort()[-config.top_k:]
-                        true_predicted = (top_k < len(re_basket_t)).sum()
-                        recall.append(float(true_predicted / len(re_basket_t)))
-                        precision.append(float(true_predicted / config.top_k))
-                        f1.append(2*(recall[-1]*precision[-1])/(recall[-1]+precision[-1]+1e-6))
+            # Calculate accuracy, recall and f1-score
+            if config.calc_train_f1:
+                all_scores = torch.nn.Sigmoid()(du_p_product[re_bks + neg_bks]).cpu().data.numpy()#.flatten()
+                # choose top k products
+                top_k = all_scores.argsort()[-config.top_k:]
+                true_predicted = (top_k < len(re_bks)).sum()
+                recall.append(float(true_predicted / len(re_bks)))
+                precision.append(float(true_predicted / config.top_k))
+                f1.append(2 * (recall[-1] * precision[-1]) / (recall[-1] + precision[-1] + 1e-6))
 
-
-            loss += torch.mean(torch.stack(loss_u))
         avg_loss = loss / len(uids)
         avg_recall = np.mean(recall)
         avg_precision = np.mean(precision)
@@ -155,17 +148,19 @@ def train():
         start_time = time.process_time()
         num_batches = ceil(len(x_train) / config.batch_size)
         loss_function = bpr_loss if config.loss == 'BPR' else multi_label_loss
-        for i, x in enumerate(dh.batch_iter(x_train, config.batch_size, config.seq_len, shuffle=True, config=config)):
+        for i, x in enumerate(dh.batch_iter(x_train, y_train, config.batch_size, config.seq_len, to_shuffle=True, config=config)):
             uids, baskets, reorder_baskets, neg_baskets, lens = x
             model.zero_grad()
             dynamic_user, _ = model(baskets, lens, dr_hidden)
 
-            # loss, recall, precision, f1 = loss_function(uids, reorder_baskets, neg_baskets, dynamic_user, model.encode.weight)
 
-            loss, recall, precision, f1 = loss_function(uids, reorder_baskets, neg_baskets, dynamic_user, model.encode.weight)
+            loss, recall, precision, f1 = loss_function(uids, reorder_baskets, neg_baskets, lens, dynamic_user, model.encode.weight)
             # tie_encoder_decoder_loss = torch.dist(model.encode.weight, model.decode.weight)
             # loss += config.encdr_decdr_regularization * tie_encoder_decoder_loss
+            # s = time.time()
             loss.backward()
+            # print('backpropogation time:', time.time() - s)
+
 
             # Clip to avoid gradient exploding
             torch.nn.utils.clip_grad_norm_(model.parameters(), config.clip)
@@ -195,23 +190,21 @@ def train():
         precision = []
         recall = []
         f1 = []
-
-        for x in dh.batch_iter(x_val, config.batch_size, config.seq_len, shuffle=False):
-            uids, baskets, _, _, lens = x
+        for x in dh.batch_iter(x_val, y_val, config.batch_size, config.seq_len, to_shuffle=False):
+            uids, baskets, reorder_baskets, neg_baskets, lens = x
             dynamic_user, _ = model(baskets, lens, dr_hidden)
-            for uid, l, du in zip(uids, lens, dynamic_user):
-                scores = []
+            for uid, re_bks, neg_bks, l, du in zip(uids, reorder_baskets, neg_baskets, lens, dynamic_user):
                 du_latest = du[l - 1].unsqueeze(0)
 
                 # calculating <u,p> score for all test items <u,p> pair
-                pos = y_val.loc[uid].reorder_baskets  # list dim 1
-                neg = y_val.loc[uid].neg_baskets
+                # pos = y_val.loc[uid].reorder_baskets  # list dim 1
+                # neg = y_val.loc[uid].neg_baskets
 
-                all_scores = torch.nn.Sigmoid()(torch.mm(du_latest, item_embedding.t())).cpu().data.numpy().flatten()[pos + neg]
+                all_scores = torch.nn.Sigmoid()(torch.mm(du_latest, item_embedding.t())).cpu().data.numpy().flatten()[re_bks + neg_bks]
                 # choose top k products
                 top_k = all_scores.argsort()[-config.top_k:]
-                true_predicted = (top_k < len(pos)).sum()
-                recall.append(float(true_predicted / len(pos)))
+                true_predicted = (top_k < len(re_bks)).sum()
+                recall.append(float(true_predicted / len(re_bks)))
                 precision.append(float(true_predicted / config.top_k))
                 f1.append(2 * (recall[-1] * precision[-1]) / (recall[-1] + precision[-1] + 1e-6))
 
@@ -232,6 +225,7 @@ def train():
     # Load data
     print("Loading data...")
     x_train = pd.read_json(sys.path[0]+'/{}'.format(config.x_train), orient='index')  # samp_x_train.json
+    y_train = pd.read_json(sys.path[0]+'/{}'.format(config.y_train), orient='index')  # samp_x_train.json
     x_val = pd.read_json(sys.path[0]+'/{}'.format(config.x_val), orient='index')
     y_val = pd.read_json(sys.path[0]+'/{}'.format(config.y_val), orient='index')
 

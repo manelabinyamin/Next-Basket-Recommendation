@@ -31,7 +31,7 @@ class DRModel(torch.nn.Module):
                                          embedding_dim=config.embedding_dim,
                                          padding_idx=0,
                                          _weight=enc_w)
-        # self.encode.weight.requires_grad = False
+        self.encode.weight.requires_grad = True
         # # Decoding
         # dec_w = torch.Tensor(config.num_product + 2, config.embedding_dim)
         # stdv = 1. / math.sqrt(dec_w.size(1))  # like in nn.Linear
@@ -67,10 +67,7 @@ class DRModel(torch.nn.Module):
         for user in x:  # x shape (batch of user, time_step, indice of product) nested lists
             embed_baskets = []
             for basket in user:
-                try:
-                    basket = torch.LongTensor(basket).resize_(1, len(basket))
-                except:
-                    debug=1
+                basket = torch.LongTensor(basket).resize_(1, len(basket))
                 basket = basket.cuda() if self.config.cuda else basket  # use cuda for acceleration
                 basket = self.encode(torch.autograd.Variable(basket))  # shape: 1, len(basket), embedding_dim
                 embed_baskets.append(self.pool(basket, dim=1))

@@ -1,9 +1,10 @@
 # -*- coding:utf-8 -*-
 class Config(object):
     def __init__(self):
-        self.x_train = 'x_train_20000.json'
-        self.x_val = 'x_val_4000.json'
-        self.y_val = 'y_val_4000.json'
+        self.x_train = 'x_train_100000.json'
+        self.y_train = 'y_train_100000.json'
+        self.x_val = 'x_val_10000.json'
+        self.y_val = 'y_val_10000.json'
         self.MODEL_DIR = 'runs/'
         self.cuda = True
         self.clip = 10

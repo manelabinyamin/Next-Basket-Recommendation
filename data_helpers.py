@@ -5,6 +5,7 @@ import torch
 import numpy as np
 import pandas as pd
 from numba import njit
+from sklearn.utils import shuffle
 
 
 def logger_fn(name, input_file, level=logging.INFO):
@@ -49,7 +50,7 @@ def pad_batch_of_lists(batch_of_lists, pad_len):
     return [l + [[0]] * (pad_len - len(l)) for l in batch_of_lists]
 
 
-def batch_iter(x_data, batch_size, pad_len, shuffle=True, config=None):
+def batch_iter(x_data, y_data, batch_size, pad_len, to_shuffle=True, config=None):
     """
     Turn dataset into iterable batches.
 
@@ -63,15 +64,17 @@ def batch_iter(x_data, batch_size, pad_len, shuffle=True, config=None):
     """
     data_size = len(x_data)
     num_batches_per_epoch = data_size // batch_size
-    if shuffle:
-        shuffled_data = x_data.sample(frac=1)
+    if to_shuffle:
+        shuffled_x, shuffled_y = shuffle(x_data, y_data)
     else:
-        shuffled_data = x_data
+        shuffled_x, shuffled_y = x_data, y_data
 
     for i in range(num_batches_per_epoch):
         b_start, b_end = i * batch_size, (i + 1) * batch_size
-        columns = ['user_id', 'baskets', 'reorder_baskets', 'neg_baskets']
-        uids,bks,re_bks,neg_bks = list(shuffled_data[b_start:b_end][columns].values.transpose())
+        x_columns = ['user_id', 'baskets']
+        y_columns = ['reorder_baskets', 'neg_baskets']
+        uids,bks = list(shuffled_x[b_start:b_end][x_columns].values.transpose())
+        re_bks,neg_bks = list(shuffled_y[b_start:b_end][y_columns].values.transpose())
         lens = np.array(list(map(len, bks)))
         uids, bks, re_bks, neg_bks, lens = sort_batch_of_lists(uids, bks, re_bks, neg_bks, lens)
         bks = pad_batch_of_lists(bks, pad_len)
@@ -80,8 +83,10 @@ def batch_iter(x_data, batch_size, pad_len, shuffle=True, config=None):
     if data_size % batch_size != 0:
         residual = [i for i in range(num_batches_per_epoch * batch_size, data_size)] + list(
             np.random.choice(data_size, batch_size - data_size % batch_size))
-        columns = ['user_id', 'baskets', 'reorder_baskets', 'neg_baskets']
-        uids, bks, re_bks, neg_bks = list(shuffled_data.loc[residual][columns].values.transpose())
+        x_columns = ['user_id', 'baskets']
+        y_columns = ['reorder_baskets', 'neg_baskets']
+        uids, bks = list(shuffled_x.iloc[residual][x_columns].values.transpose())
+        re_bks, neg_bks = list(shuffled_y.iloc[residual][y_columns].values.transpose())
         lens = np.array(list(map(len, bks)))
         uids, bks, re_bks, neg_bks, lens = sort_batch_of_lists(uids, bks, re_bks, neg_bks, lens)
         bks = pad_batch_of_lists(bks, pad_len)
