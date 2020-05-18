@@ -147,6 +147,65 @@ def train():
         avg_f1 = np.mean(f1)
         return avg_loss, avg_recall, avg_precision, avg_f1
 
+    def bpr_loss_pred_seq(uids, reorder_baskets, neg_baskets, dynamic_user, item_embedding):
+        """
+        Bayesian personalized ranking loss for implicit feedback.
+
+        Args:
+            uids: batch of users' ID
+            prev_baskets: batch of users' previous baskets
+            reorder_baskets: batch of users' reordered items in the baskets
+            dynamic_user: batch of users' dynamic representations
+            item_embedding: item_embedding matrix
+        """
+        loss = 0
+        recall = []
+        precision = []
+        f1 = []
+        for uid, re_bks, neg_bks, du in zip(uids, reorder_baskets, neg_baskets, dynamic_user):
+            du_p_product = torch.mm(du, item_embedding.t())  # shape: [pad_len, num_item]
+            loss_u = []  # loss for user
+            for t, [re_basket_t, neg_bks_t] in enumerate(zip(re_bks,neg_bks)):
+                if re_basket_t[0] != 0 and t != 0:
+                    # positive idx
+                    if re_basket_t[0]==None:
+                        re_basket_t = [config.none_idx]
+                    pos_idx = torch.cuda.LongTensor(re_basket_t) if config.cuda else torch.LongTensor(re_basket_t)
+                    # Sample negative products.
+                    if config.use_neg_baskets:
+                        num_his_neg = min(int(np.ceil(len(re_basket_t)*config.neg_basket_ratio)),len(neg_bks_t))
+                        # choose previously ordered products
+                        neg = [np.random.choice(neg_bks_t) for _ in range(num_his_neg)]
+                        # choose from all products
+                        neg += [np.random.choice(config.num_product) for _ in range(len(re_basket_t)-num_his_neg)]
+                    else:
+                        # sample neg products randomly from all products
+                        neg = np.random.choice(config.num_product, len(re_basket_t))
+
+                    neg_idx = torch.cuda.LongTensor(neg) if config.cuda else torch.LongTensor(neg)
+                    # Score p(u, t, v > v')
+                    score = du_p_product[t - 1][pos_idx] - du_p_product[t - 1][neg_idx]
+                    # Average Negative log likelihood for re_basket_t
+                    loss_u.append(-torch.mean(torch.nn.LogSigmoid()(score)))
+
+                    # Calculate accuracy, recall and f1-score
+                    if config.calc_train_f1:
+                        all_scores = torch.nn.Sigmoid()(du_p_product[t - 1][re_basket_t+neg_bks_t]).cpu().data.numpy().flatten()
+                        # choose top k products
+                        top_k = all_scores.argsort()[-config.top_k:]
+                        true_predicted = (top_k < len(re_basket_t)).sum()
+                        recall.append(float(true_predicted / len(re_basket_t)))
+                        precision.append(float(true_predicted / config.top_k))
+                        f1.append(2*(recall[-1]*precision[-1])/(recall[-1]+precision[-1]+1e-6))
+
+
+            loss += torch.mean(torch.stack(loss_u))
+        avg_loss = loss / len(uids)
+        avg_recall = np.mean(recall)
+        avg_precision = np.mean(precision)
+        avg_f1 = np.mean(f1)
+        return avg_loss, avg_recall, avg_precision, avg_f1
+
     def train_model():
         model.train()  # turn on training mode for dropout
         dr_hidden = model.init_hidden(config.batch_size)
@@ -155,15 +214,16 @@ def train():
         train_f1 = []
         train_loss = []
         start_time = time.process_time()
-        num_batches = ceil(len(x_train) / config.batch_size)
+        num_batches = ceil(len(x_data) / config.batch_size)
         loss_function = bpr_loss if config.loss == 'BPR' else multi_label_loss
-        for i, x in enumerate(dh.batch_iter(x_train, y_train, config.batch_size, config.seq_len, to_shuffle=True, config=config)):
+        for i, x in enumerate(dh.batch_iter(x_data, config.batch_size, config.seq_len, to_shuffle=True)):
             uids, baskets, dow, hour_of_day, days2next, reorder_baskets, neg_baskets, lens = x
             model.zero_grad()
             dynamic_user, _ = model(baskets, dow, hour_of_day, days2next, lens, dr_hidden)
 
 
-            loss, recall, precision, f1 = loss_function(uids, reorder_baskets, neg_baskets, lens, dynamic_user, model.decode.weight)
+            loss, recall, precision, f1 = bpr_loss_pred_seq(uids, reorder_baskets, neg_baskets, dynamic_user, model.decode.weight)
+            # loss, recall, precision, f1 = loss_function(uids, reorder_baskets, neg_baskets, lens, dynamic_user, model.decode.weight)
             # tie_encoder_decoder_loss = torch.dist(model.encode.weight, model.decode.weight)
             # loss += config.encdr_decdr_regularization * tie_encoder_decoder_loss
             # s = time.time()
@@ -192,14 +252,14 @@ def train():
 
 
     def evaluate_model():
-        model.eval()
+        # model.eval()
         item_embedding = model.decode.weight
         dr_hidden = model.init_hidden(config.batch_size)
 
         precision = []
         recall = []
         f1 = []
-        for x in dh.batch_iter(x_val, y_val, config.batch_size, config.seq_len, to_shuffle=False):
+        for x in dh.batch_iter_eval(x_val, y_val, config.batch_size, config.seq_len, to_shuffle=False):
             uids, baskets, dow, hour_of_day, days2next, reorder_baskets, neg_baskets, lens = x
             dynamic_user, _ = model(baskets, dow, hour_of_day, days2next, lens, dr_hidden)
             for uid, re_bks, neg_bks, l, du in zip(uids, reorder_baskets, neg_baskets, lens, dynamic_user):
@@ -237,6 +297,8 @@ def train():
     y_train = pd.read_json(sys.path[0]+'/{}'.format(config.y_train), orient='index')  # samp_x_train.json
     x_val = pd.read_json(sys.path[0]+'/{}'.format(config.x_val), orient='index')
     y_val = pd.read_json(sys.path[0]+'/{}'.format(config.y_val), orient='index')
+
+    x_data = pd.concat([x_train, x_val]).reset_index(drop=True)
 
     # Model config
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
@@ -277,6 +339,11 @@ def train():
 
             train_loss, train_precision, train_recall, train_f1 = train_model()
             print('-' * 89)
+
+            print('[Train]| Epochs {:3d} | Recall {:02.4f} | Precision {:02.4f} | F1-Score {:02.4f} |'
+                  .format(epoch, train_loss, train_recall, train_precision, train_f1))
+            print('-' * 89)
+
 
             test_precision, test_recall, test_f1 = evaluate_model()
             print('-' * 89)

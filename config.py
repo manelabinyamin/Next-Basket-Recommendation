@@ -14,7 +14,7 @@ class Config(object):
         self.learning_rate = 0.001  # Initial Learning Rate
         self.log_interval = 1  # num of batches between two logging
         self.basket_pool_type = 'avg'  # ['avg', 'max', 'sum']
-        self.rnn_type = 'RNN_RELU'  # ['RNN_TANH', 'RNN_RELU', 'LSTM', 'GRU']
+        self.rnn_type = 'GRU'  # ['RNN_TANH', 'RNN_RELU', 'LSTM', 'GRU']
         self.rnn_layer_num = 2
         self.dropout = 0.5
         self.num_product = 49688  # Embedding Layer

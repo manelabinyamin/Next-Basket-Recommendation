@@ -44,7 +44,54 @@ def pad_batch_of_lists(batch_of_lists, pad_len):
     return [l + [[0]] * (pad_len - len(l)) for l in batch_of_lists]
 
 
-def batch_iter(x_data, y_data, batch_size, pad_len, to_shuffle=True, config=None):
+def batch_iter(x_data, batch_size, pad_len, to_shuffle=True):
+    """
+    Turn dataset into iterable batches.
+
+    Args:
+        data: The data
+        batch_size: The size of the data batch
+        pad_len: The padding length
+        shuffle: Shuffle or not (default: True)
+    Returns:
+        A batch iterator for data set
+    """
+    data_size = len(x_data)
+    num_batches_per_epoch = data_size // batch_size
+    if to_shuffle:
+        shuffled_x = shuffle(x_data)
+    else:
+        shuffled_x = x_data
+
+    for i in range(num_batches_per_epoch):
+        b_start, b_end = i * batch_size, (i + 1) * batch_size
+        x_columns = ['user_id', 'baskets', 'order_dow', 'order_hour_of_day', 'days_to_next_order', 'reorder_baskets', 'neg_baskets']
+        uids,bks,dow,hour_of_day,days2next, re_bks,neg_bks = list(shuffled_x[b_start:b_end][x_columns].values.transpose())
+        lens = np.array(list(map(len, bks)))
+        uids,bks,dow,hour_of_day,days2next,re_bks,neg_bks,lens = sort_batch_of_lists(lens, [uids,bks,dow,hour_of_day,days2next,re_bks,neg_bks,lens])
+        # pad lists
+        bks = [l + [[0]] * (pad_len - len(l)) for l in bks]
+        dow = [l + [0] * (pad_len - len(l)) for l in dow]
+        hour_of_day = [l + [0] * (pad_len - len(l)) for l in hour_of_day]
+        days2next = [l + [0] * (pad_len - len(l)) for l in days2next]
+        yield uids, bks, dow, hour_of_day, days2next, re_bks, neg_bks, lens
+
+    if data_size % batch_size != 0:
+        residual = [i for i in range(num_batches_per_epoch * batch_size, data_size)] + list(
+            np.random.choice(data_size, batch_size - data_size % batch_size))
+        x_columns = ['user_id', 'baskets', 'order_dow', 'order_hour_of_day', 'days_to_next_order', 'reorder_baskets', 'neg_baskets']
+        uids, bks, dow, hour_of_day, days2next, re_bks, neg_bks = list(shuffled_x.iloc[residual][x_columns].values.transpose())
+        lens = np.array(list(map(len, bks)))
+        uids,bks,dow,hour_of_day,days2next,re_bks,neg_bks,lens = sort_batch_of_lists(lens, [uids,bks,dow,hour_of_day,days2next,re_bks,neg_bks,lens])
+        # pad lists
+        bks = [l + [[0]] * (pad_len - len(l)) for l in bks]
+        dow = [l + [0] * (pad_len - len(l)) for l in dow]
+        hour_of_day = [l + [0] * (pad_len - len(l)) for l in hour_of_day]
+        days2next = [l + [0] * (pad_len - len(l)) for l in days2next]
+        yield uids, bks, dow, hour_of_day, days2next, re_bks, neg_bks, lens
+
+
+def batch_iter_eval(x_data, y_data, batch_size, pad_len, to_shuffle=True):
     """
     Turn dataset into iterable batches.
 
@@ -93,7 +140,7 @@ def batch_iter(x_data, y_data, batch_size, pad_len, to_shuffle=True, config=None
         hour_of_day = [l + [0] * (pad_len - len(l)) for l in hour_of_day]
         days2next = [l + [0] * (pad_len - len(l)) for l in days2next]
         yield uids, bks, dow, hour_of_day, days2next, re_bks, neg_bks, lens
-
+#
 
 def pool_max(tensor, dim):
     return torch.max(tensor, dim)[0]
