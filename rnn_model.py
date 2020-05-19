@@ -20,7 +20,7 @@ class DRModel(torch.nn.Module):
 
         # Model configuration
         self.config = config
-        self.hidden_dim = config.embedding_dim + 10
+        self.hidden_dim = config.embedding_dim
         # Encoding
         # # random initialization
         # enc_w = torch.Tensor(config.num_product + 2, config.embedding_dim)
@@ -45,7 +45,7 @@ class DRModel(torch.nn.Module):
 
         # RNN type specify
         if config.rnn_type in ['LSTM', 'GRU']:
-            self.rnn = getattr(torch.nn, config.rnn_type)(input_size=self.hidden_dim,
+            self.rnn = getattr(torch.nn, config.rnn_type)(input_size=config.embedding_dim + 10,
                                                           hidden_size=self.hidden_dim,
                                                           num_layers=config.rnn_layer_num,
                                                           batch_first=True,

@@ -48,7 +48,7 @@ def calc_acc(scores, pos_idx):
 
 def train():
 
-    def multi_label_loss(uids, reorder_baskets, neg_baskets, lens, dynamic_user, item_embedding):
+    def multi_label_loss(uids, reorder_baskets, prev_reordered, neg_baskets, lens, dynamic_user, item_embedding):
         '''
         weighted multi-labeled loss function
         :param uids: batch of users' ID
@@ -95,7 +95,7 @@ def train():
         avg_f1 = np.mean(f1)
         return avg_loss, avg_recall, avg_precision, avg_f1
 
-    def bpr_loss(uids, reorder_baskets, neg_baskets, lens, dynamic_user, item_embedding):
+    def bpr_loss(uids, reorder_baskets, prev_reordered, neg_baskets, lens, dynamic_user, item_embedding):
         """
         Bayesian personalized ranking loss for implicit feedback.
 
@@ -147,7 +147,7 @@ def train():
         avg_f1 = np.mean(f1)
         return avg_loss, avg_recall, avg_precision, avg_f1
 
-    def bpr_loss_seq(uids, reorder_baskets, neg_baskets, lens, dynamic_user, item_embedding):
+    def bpr_loss_seq(uids, reorder_baskets, prev_reordered, neg_baskets, lens, dynamic_user, item_embedding):
         """
         Bayesian personalized ranking loss for implicit feedback.
 
@@ -162,10 +162,14 @@ def train():
         recall = []
         precision = []
         f1 = []
-        for uid, re_bks, neg_bks, ulen, du in zip(uids, reorder_baskets, neg_baskets, lens, dynamic_user):
+        ub_recall = []
+        ub_precision = []
+        ub_f1 = []
+
+        for uid, re_bks, prv_re, neg_bks, ulen, du in zip(uids, reorder_baskets, prev_reordered, neg_baskets, lens, dynamic_user):
             du_p_product = torch.mm(du, item_embedding.t())  # shape: [pad_len, num_item]
             loss_u = []  # loss for user
-            for t, [re_basket_t, neg_bks_t] in enumerate(zip(re_bks,neg_bks)):
+            for t, [re_basket_t, prv_reordered_t, neg_bks_t] in enumerate(zip(re_bks,prv_re,neg_bks)):
                 if re_basket_t[0] != 0 and t != 0:
                     # positive idx
                     if re_basket_t[0]==None:
@@ -190,34 +194,44 @@ def train():
 
                     # Calculate accuracy, recall and f1-score
                     if config.calc_train_f1 and t==ulen-1:
-                        all_relevant_prods = neg_bks_t if re_basket_t[0] == config.none_idx else re_basket_t+neg_bks_t
-                        all_scores = torch.nn.Sigmoid()(du_p_product[t - 1][all_relevant_prods]).cpu().data.numpy().flatten()
+                        # all_relevant_prods = neg_bks_t if re_basket_t[0] == config.none_idx else re_basket_t+neg_bks_t
+                        all_scores = torch.nn.Sigmoid()(du_p_product[t - 1][prv_reordered_t]).cpu().data.numpy().flatten()
                         # choose top k products
-                        if all_scores.max() < config.prediction_threshold:  # choose an empty basket
+                        # if all_scores.max() < config.prediction_threshold and False:  # choose an empty basket
+                        #     top_k = [config.none_idx]
+                        #     true_predicted = 1 if re_basket_t[0] == config.none_idx else 0
+                        if len(all_scores) == 0:  # choose an empty basket
                             top_k = [config.none_idx]
                             true_predicted = 1 if re_basket_t[0] == config.none_idx else 0
                         else:
                             top_k = all_scores.argsort()[-config.top_k:]
-                            true_predicted = (top_k < len(re_basket_t)).sum()
+                            target_reorder = np.where(np.isin(prv_reordered_t,re_basket_t))[0]
+                            true_predicted = len(set(target_reorder)&set(top_k))
                         recall.append(float(true_predicted / len(re_basket_t)))
                         precision.append(float(true_predicted / len(top_k)))
                         f1.append(2*(recall[-1]*precision[-1])/(recall[-1]+precision[-1]+1e-6))
-
+                        # check best possible results (upper bounds)
+                        ub_true_predicted = len(set(prv_reordered_t)&set(re_basket_t))
+                        ub_recall.append(float(ub_true_predicted / len(re_basket_t)))
+                        ub_precision.append(1 if true_predicted>0 else 0)
+                        ub_f1.append(2*(ub_recall[-1]*ub_precision[-1])/(ub_recall[-1]+ub_precision[-1]+1e-6))
 
             loss += torch.mean(torch.stack(loss_u))
         avg_loss = loss / len(uids)
         avg_recall = np.mean(recall)
         avg_precision = np.mean(precision)
         avg_f1 = np.mean(f1)
-        return avg_loss, avg_recall, avg_precision, avg_f1
+        avg_ub_recall, avg_ub_precision, avg_ub_f1 = np.mean(ub_recall),np.mean(ub_precision),np.mean(ub_f1)
+        return avg_loss, avg_recall, avg_precision, avg_f1, avg_ub_recall, avg_ub_precision, avg_ub_f1
 
     def train_model():
         model.train()  # turn on training mode for dropout
         dr_hidden = model.init_hidden(config.batch_size)
-        train_recall = []
-        train_precision = []
-        train_f1 = []
+        # performances measures
         train_loss = []
+        train_recall,train_precision,train_f1 = [],[],[]
+        train_ub_recall,train_ub_precision,train_ub_f1 = [],[],[]
+        # training
         start_time = time.process_time()
         num_batches = ceil(len(x_data) / config.batch_size)
         l_functions = {'BPR':bpr_loss, 'BPR_seq':bpr_loss_seq, 'Multi_labeled':multi_label_loss}
@@ -227,7 +241,7 @@ def train():
             model.zero_grad()
             dynamic_user, _ = model(baskets, dow, hour_of_day, days2next, lens, dr_hidden)
 
-            loss, recall, precision, f1 = loss_function(uids, reorder_baskets, neg_baskets, lens, dynamic_user, model.decode.weight)
+            loss, recall, precision, f1, ub_recall, ub_precision, ub_f1 = loss_function(uids, reorder_baskets, prv_reorder, neg_baskets, lens, dynamic_user, model.decode.weight)
             # tie_encoder_decoder_loss = torch.dist(model.encode.weight, model.decode.weight)
             # loss += config.encdr_decdr_regularization * tie_encoder_decoder_loss
             # s = time.time()
@@ -245,6 +259,10 @@ def train():
             train_precision.append(precision)
             train_f1.append(f1)
             train_loss.append(loss.item())
+            train_ub_recall.append(ub_recall)
+            train_ub_precision.append(ub_precision)
+            train_ub_f1.append(ub_f1)
+
             # Logging
             if i % config.log_interval == 0 and i > 0:
                 elapsed = (time.time() - start_time) / config.log_interval
@@ -252,7 +270,7 @@ def train():
                 print('[Training]| Epochs {:3d} | Batch {:5d} / {:5d} | sec/batch {:02.2f} | Loss {:05.4f} | Recall {:05.4f} | Precision {:05.4f} | f1 {:05.4f} |'
                             .format(epoch, i, num_batches, elapsed, loss, recall, precision, f1))
 
-        return np.mean(train_loss), np.mean(train_precision), np.mean(train_recall), np.mean(train_f1)
+        return np.mean(train_loss), np.mean(train_precision), np.mean(train_recall), np.mean(train_f1), np.mean(train_ub_recall), np.mean(train_ub_precision), np.mean(train_ub_f1)
 
 
     def evaluate_model():
@@ -264,20 +282,24 @@ def train():
         recall = []
         f1 = []
         for x in dh.batch_iter_eval(x_val, y_val, config.batch_size, config.seq_len, to_shuffle=False):
-            uids, baskets, dow, hour_of_day, days2next, reorder_baskets, neg_baskets, lens = x
+            uids, baskets, dow, hour_of_day, days2next, reorder_baskets, neg_baskets, prv_reorder, lens = x
             dynamic_user, _ = model(baskets, dow, hour_of_day, days2next, lens, dr_hidden)
-            for uid, re_bks, neg_bks, l, du in zip(uids, reorder_baskets, neg_baskets, lens, dynamic_user):
+            for uid, re_bks, prv_re, neg_bks, l, du in zip(uids, reorder_baskets, prv_reorder, neg_baskets, lens, dynamic_user):
                 du_latest = du[l - 1].unsqueeze(0)
 
-                all_relevant_prods = neg_bks if re_bks[0] == config.none_idx else re_bks + neg_bks
-                all_scores = torch.nn.Sigmoid()(torch.mm(du_latest, item_embedding.t())).cpu().data.numpy().flatten()[all_relevant_prods]
+                # all_relevant_prods = neg_bks if re_bks[0] == config.none_idx else re_bks + neg_bks
+                all_scores = torch.nn.Sigmoid()(torch.mm(du_latest, item_embedding.t())).cpu().data.numpy().flatten()[prv_re]
                 # choose top k products
-                if all_scores.max() < config.prediction_threshold:  # choose an empty basket
+                # if all_scores.max() < config.prediction_threshold:  # choose an empty basket
+                #     top_k = [config.none_idx]
+                #     true_predicted = 1 if re_bks[0] == config.none_idx else 0
+                if len(all_scores) == 0:  # choose an empty basket
                     top_k = [config.none_idx]
                     true_predicted = 1 if re_bks[0] == config.none_idx else 0
                 else:
                     top_k = all_scores.argsort()[-config.top_k:]
-                    true_predicted = (top_k < len(re_bks)).sum()
+                    target_reorder = np.where(np.isin(prv_re, re_bks))[0]
+                    true_predicted = len(set(target_reorder) & set(top_k))
                 recall.append(float(true_predicted / len(re_bks)))
                 precision.append(float(true_predicted / len(top_k)))
                 f1.append(2 * (recall[-1] * precision[-1]) / (recall[-1] + precision[-1] + 1e-6))
@@ -285,13 +307,13 @@ def train():
         avg_precision = np.mean(precision)
         avg_recall = np.mean(recall)
         avg_f1 = np.mean(f1)
-        print('[Test]| Epochs {:3d} | Recall {:02.4f} | Precision {:02.4f} | F1-Score {:02.4f} |'
-                    .format(epoch, avg_recall, avg_precision, avg_f1))
         return avg_precision, avg_recall, avg_f1
 
-    def plot_line(ax, train_l, test_l, title, add_legend=False):
+    def plot_line(ax, train_l, test_l, title, add_legend=False, upper_bound=None):
         ax.plot(range(len(train_l)), train_l, color='blue', label='train')
         ax.plot(range(len(test_l)), test_l, color='red', label='val')
+        if upper_bound is not None:
+            ax.plot(range(len(upper_bound)), upper_bound, color='green', label='Upper-Bound')
         ax.set_title(title)
         if add_legend:
             ax.legend()
@@ -330,27 +352,31 @@ def train():
 
     all_train_precision, all_train_recall, all_train_f1 = [], [], []
     all_test_precision, all_test_recall, all_test_f1 = [], [], []
+    all_ub_recall, all_ub_precision, all_ub_f1 = [], [], []
 
     try:
         fig, axes = plt.subplots(3, 1)
         # plt.ion()
-        plot_line(axes[0], [], [], 'Precision', add_legend=True)
-        plot_line(axes[1], [], [], 'Recall', add_legend=True)
-        plot_line(axes[2], [], [], 'F1-score', add_legend=True)
+        plot_line(axes[0], [], [], 'Precision', add_legend=True, upper_bound=None)
+        plot_line(axes[1], [], [], 'Recall', add_legend=True, upper_bound=None)
+        plot_line(axes[2], [], [], 'F1-score', add_legend=True, upper_bound=None)
         # Training
         for epoch in range(config.epochs):
             # test_precision, test_recall, test_f1 = evaluate_model()
             # print('-' * 89)
 
-            train_loss, train_precision, train_recall, train_f1 = train_model()
-            print('-' * 89)
-
-            print('[Train]| Epochs {:3d} | Recall {:02.4f} | Precision {:02.4f} | F1-Score {:02.4f} |'
-                  .format(epoch, train_loss, train_recall, train_precision, train_f1))
-            print('-' * 89)
-
-
+            train_loss, train_precision, train_recall, train_f1, ub_recall, ub_precision, ub_f1 = train_model()
             test_precision, test_recall, test_f1 = evaluate_model()
+            # print results
+            print('-' * 89)
+            print('[Upper-Bounds]| Epochs {:3d} | Recall {:02.4f} | Precision {:02.4f} | F1-Score {:02.4f} |'
+                  .format(epoch, ub_recall, ub_precision, ub_f1))
+            print('-' * 89)
+            print('[Train]| Epochs {:3d} | Recall {:02.4f} | Precision {:02.4f} | F1-Score {:02.4f} |'
+                  .format(epoch, train_recall, train_precision, train_f1))
+            print('-' * 89)
+            print('[Test]| Epochs {:3d} | Recall {:02.4f} | Precision {:02.4f} | F1-Score {:02.4f} |'
+                  .format(epoch, test_recall, test_precision, test_f1))
             print('-' * 89)
 
             # save results
@@ -360,12 +386,15 @@ def train():
             all_test_precision.append(test_precision)
             all_test_recall.append(test_recall)
             all_test_f1.append(test_f1)
+            all_ub_recall.append(ub_recall)
+            all_ub_precision.append(ub_precision)
+            all_ub_f1.append(ub_f1)
             # plot results
             # plt.close()
             # fig, axes = plt.subplots(3, 1)
-            plot_line(axes[0], all_train_precision, all_test_precision, 'Precision')
-            plot_line(axes[1], all_train_recall, all_test_recall, 'Recall')
-            plot_line(axes[2], all_train_f1, all_test_f1, 'F1-score')
+            plot_line(axes[0], all_train_precision, all_test_precision, 'Precision', upper_bound=None)
+            plot_line(axes[1], all_train_recall, all_test_recall, 'Recall', upper_bound=None)
+            plot_line(axes[2], all_train_f1, all_test_f1, 'F1-score', upper_bound=None)
             fig.canvas.draw()
             fig.canvas.flush_events()
             # plt.show()
