@@ -256,7 +256,7 @@ def train():
 
 
     def evaluate_model():
-        # model.eval()
+        model.eval()
         item_embedding = model.decode.weight
         dr_hidden = model.init_hidden(config.batch_size)
 
