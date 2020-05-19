@@ -223,7 +223,7 @@ def train():
         l_functions = {'BPR':bpr_loss, 'BPR_seq':bpr_loss_seq, 'Multi_labeled':multi_label_loss}
         loss_function = l_functions[config.loss]
         for i, x in enumerate(dh.batch_iter(x_data, config.batch_size, config.seq_len, to_shuffle=True)):
-            uids, baskets, dow, hour_of_day, days2next, reorder_baskets, neg_baskets, lens = x
+            uids, baskets, dow, hour_of_day, days2next, reorder_baskets, neg_baskets, prv_reorder, lens = x
             model.zero_grad()
             dynamic_user, _ = model(baskets, dow, hour_of_day, days2next, lens, dr_hidden)
 
