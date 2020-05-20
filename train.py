@@ -159,6 +159,70 @@ def train():
         avg_f1 = np.mean(f1)
         return avg_loss, avg_recall, avg_precision, avg_f1
 
+    def neg_samp_loss(uids, reorder_baskets, neg_baskets, lens, dynamic_user, item_embedding):
+        """
+        Bayesian personalized ranking loss for implicit feedback.
+
+        Args:
+            uids: batch of users' ID
+            prev_baskets: batch of users' previous baskets
+            reorder_baskets: batch of users' reordered items in the baskets
+            dynamic_user: batch of users' dynamic representations
+            item_embedding: item_embedding matrix
+        """
+        loss = 0
+        recall = []
+        precision = []
+        f1 = []
+
+        for uid, re_bks, neg_bks, ulen, du in zip(uids, reorder_baskets, neg_baskets, lens, dynamic_user):
+            du_p_product = torch.mm(du, item_embedding.t())  # shape: [pad_len, num_item]
+            loss_u = []  # loss for user
+            for t, [re_basket_t, neg_bks_t] in enumerate(zip(re_bks,neg_bks)):
+                if re_basket_t[0] != 0 and t != 0:
+                    # positive idx
+                    if re_basket_t[0]==None:
+                        re_basket_t = [config.none_idx]
+                    pos_idx = torch.cuda.LongTensor(re_basket_t) if config.cuda else torch.LongTensor(re_basket_t)
+                    # Sample negative products.
+                    neg_samps = 3 * len(re_basket_t)
+                    num_his_neg = min(neg_samps,len(neg_bks_t))
+                    # choose previously ordered products
+                    neg = [np.random.choice(neg_bks_t) for _ in range(num_his_neg)]
+                    # choose from all products
+                    neg += [np.random.choice(config.num_product) for _ in range(neg_samps-num_his_neg)]
+
+                    neg_idx = torch.cuda.LongTensor(neg) if config.cuda else torch.LongTensor(neg)
+                    # Score p(u, t, v > v')
+
+                    prediction = du_p_product[t - 1][re_basket_t + neg].unsqueeze(0)
+                    targets = torch.cat([torch.ones(1, len(re_basket_t)), torch.zeros(1, len(neg))],dim=1)
+                    if config.cuda:
+                        targets = targets.cuda()
+                    loss_u.append(torch.nn.BCEWithLogitsLoss()(prediction, targets))
+
+                    # Calculate accuracy, recall and f1-score
+                    if config.calc_train_f1 and t==ulen-1:
+                        all_relevant_prods = neg_bks_t if re_basket_t[0] == config.none_idx else re_basket_t+neg_bks_t
+                        all_scores = torch.nn.Sigmoid()(du_p_product[t - 1][all_relevant_prods]).cpu().data.numpy().flatten()
+                        # choose top k products
+                        if all_scores.max() < config.prediction_threshold:  # choose an empty basket
+                            top_k = [config.none_idx]
+                            true_predicted = 1 if re_basket_t[0] == config.none_idx else 0
+                        else:
+                            top_k = all_scores.argsort()[-config.top_k:]
+                            true_predicted = (top_k < len(re_basket_t)).sum()
+                        recall.append(float(true_predicted / len(re_basket_t)))
+                        precision.append(float(true_predicted / len(top_k)))
+                        f1.append(2*(recall[-1]*precision[-1])/(recall[-1]+precision[-1]+1e-6))
+
+            loss += torch.mean(torch.stack(loss_u))
+        avg_loss = loss / len(uids)
+        avg_recall = np.mean(recall)
+        avg_precision = np.mean(precision)
+        avg_f1 = np.mean(f1)
+        return avg_loss, avg_recall, avg_precision, avg_f1
+
     def train_model():
         model.train()  # turn on training mode for dropout
         dr_hidden = model.init_hidden(config.batch_size)
@@ -168,7 +232,7 @@ def train():
         # training
         start_time = time.process_time()
         num_batches = ceil(len(x_data) / config.batch_size)
-        l_functions = {'BPR':bpr_loss, 'Multi_labeled':multi_label_loss}
+        l_functions = {'BPR':bpr_loss, 'Multi_labeled':multi_label_loss, 'Neg_samp':neg_samp_loss}
         loss_function = l_functions[config.loss]
         for i, x in enumerate(dh.batch_iter(x_data, config.batch_size, config.seq_len, to_shuffle=True)):
             uids, baskets, dow, hour_of_day, days2next, reorder_baskets, neg_baskets, prv_reorder, lens = x
@@ -218,15 +282,24 @@ def train():
             for uid, re_bks, prv_re, neg_bks, l, du in zip(uids, reorder_baskets, prv_reorder, neg_baskets, lens, dynamic_user):
                 du_latest = du[l - 1].unsqueeze(0)
 
-                all_relevant_prods = neg_bks if re_bks[0] == config.none_idx else re_bks + neg_bks
-                all_scores = torch.nn.Sigmoid()(torch.mm(du_latest, item_embedding.t())).cpu().data.numpy().flatten()[all_relevant_prods]
+                all_scores = torch.nn.Sigmoid()(torch.mm(du_latest, item_embedding.t())).cpu().data.numpy().flatten()[prv_re]
                 # choose top k products
-                if all_scores.max() < config.prediction_threshold:  # choose an empty basket
+                if len(all_scores) == 0:  # choose an empty basket
                     top_k = [config.none_idx]
                     true_predicted = 1 if re_bks[0] == config.none_idx else 0
                 else:
                     top_k = all_scores.argsort()[-config.top_k:]
-                    true_predicted = (top_k < len(re_bks)).sum()
+                    target_reorder = np.where(np.isin(prv_re, re_bks))[0]
+                    true_predicted = len(set(target_reorder) & set(top_k))
+                # all_relevant_prods = neg_bks if re_bks[0] == config.none_idx else re_bks + neg_bks
+                # all_scores = torch.nn.Sigmoid()(torch.mm(du_latest, item_embedding.t())).cpu().data.numpy().flatten()[all_relevant_prods]
+                # # choose top k products
+                # if all_scores.max() < config.prediction_threshold:  # choose an empty basket
+                #     top_k = [config.none_idx]
+                #     true_predicted = 1 if re_bks[0] == config.none_idx else 0
+                # else:
+                #     top_k = all_scores.argsort()[-config.top_k:]
+                #     true_predicted = (top_k < len(re_bks)).sum()
                 recall.append(float(true_predicted / len(re_bks)))
                 precision.append(float(true_predicted / len(top_k)))
                 f1.append(2 * (recall[-1] * precision[-1]) / (recall[-1] + precision[-1] + 1e-6))
@@ -296,8 +369,8 @@ def train():
             test_precision, test_recall, test_f1 = evaluate_model()
             # print results
             print('-' * 89)
-            print('[Train]| Epochs {:3d} | Recall {:02.4f} | Precision {:02.4f} | F1-Score {:02.4f} |'
-                  .format(epoch, train_recall, train_precision, train_f1))
+            print('[Train]| Epochs {:3d} | Loss {:02.4f} | Recall {:02.4f} | Precision {:02.4f} | F1-Score {:02.4f} |'
+                  .format(epoch, train_loss, train_recall, train_precision, train_f1))
             print('-' * 89)
             print('[Test]| Epochs {:3d} | Recall {:02.4f} | Precision {:02.4f} | F1-Score {:02.4f} |'
                   .format(epoch, test_recall, test_precision, test_f1))

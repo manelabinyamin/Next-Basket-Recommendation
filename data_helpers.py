@@ -6,6 +6,7 @@ import numpy as np
 import pandas as pd
 from numba import njit
 from sklearn.utils import shuffle
+import math
 
 
 def logger_fn(name, input_file, level=logging.INFO):
@@ -152,3 +153,8 @@ def pool_avg(tensor, dim):
 
 def pool_sum(tensor, dim):
     return torch.sum(tensor, dim)
+
+
+def neg_sampling_list(unigram):
+
+    return np.repeat(range(1,math.ceil(len(unigram)+1)))
