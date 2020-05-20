@@ -1,10 +1,10 @@
 # -*- coding:utf-8 -*-
 class Config(object):
     def __init__(self):
-        self.x_train = 'x_train_50000.json'
-        self.y_train = 'y_train_50000.json'
-        self.x_val = 'x_val_5000.json'
-        self.y_val = 'y_val_5000.json'
+        self.x_train = 'x_train_10.json'
+        self.y_train = 'y_train_10.json'
+        self.x_val = 'x_val_10.json'
+        self.y_val = 'y_val_10.json'
         self.MODEL_DIR = 'runs/'
         self.cuda = True
         self.clip = 10
@@ -22,7 +22,7 @@ class Config(object):
         self.embedding_dim = 100  # Embedding Layer
         self.top_k = 5  # Top K
         self.recall_weight = 1000
-        self.loss = 'BPR_seq'  # ['BPR', 'BPR_seq', 'Multi_labeled']
+        self.loss = 'BPR'  # ['BPR', 'Multi_labeled']
         self.substract_bias = True
         self.adaptive_lr = True
         self.use_neg_baskets = True
