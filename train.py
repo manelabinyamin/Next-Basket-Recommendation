@@ -146,7 +146,8 @@ def train():
                             top_k = [config.none_idx]
                             true_predicted = 1 if re_basket_t[0] == config.none_idx else 0
                         else:
-                            top_k = all_scores.argsort()[-config.top_k:]
+                            k = len(re_basket_t)
+                            top_k = all_scores.argsort()[-k:]#[-config.top_k:]
                             true_predicted = (top_k < len(re_basket_t)).sum()
                         recall.append(float(true_predicted / len(re_basket_t)))
                         precision.append(float(true_predicted / len(top_k)))
@@ -210,7 +211,8 @@ def train():
                             top_k = [config.none_idx]
                             true_predicted = 1 if re_basket_t[0] == config.none_idx else 0
                         else:
-                            top_k = all_scores.argsort()[-config.top_k:]
+                            k = len(re_basket_t)
+                            top_k = all_scores.argsort()[-k:]#[-config.top_k:]
                             true_predicted = (top_k < len(re_basket_t)).sum()
                         recall.append(float(true_predicted / len(re_basket_t)))
                         precision.append(float(true_predicted / len(top_k)))
@@ -288,7 +290,7 @@ def train():
                     top_k = [config.none_idx]
                     true_predicted = 1 if re_bks[0] == config.none_idx else 0
                 else:
-                    top_k = all_scores.argsort()[-config.top_k:]
+                    top_k = all_scores.argsort()[-len(re_bks):]
                     target_reorder = np.where(np.isin(prv_re, re_bks))[0]
                     true_predicted = len(set(target_reorder) & set(top_k))
                 # all_relevant_prods = neg_bks if re_bks[0] == config.none_idx else re_bks + neg_bks

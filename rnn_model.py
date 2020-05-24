@@ -33,7 +33,7 @@ class DRModel(torch.nn.Module):
                                          padding_idx=0,
                                          _weight=enc_w)
         self.encode.weight.requires_grad = False
-        # Decoding
+        # # Decoding
         dec_w = torch.Tensor(config.num_product + 2, self.hidden_dim)
         stdv = 1. / math.sqrt(dec_w.size(1))  # like in nn.Linear
         dec_w.uniform_(-stdv, stdv)
